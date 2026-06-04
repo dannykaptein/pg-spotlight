@@ -164,7 +164,7 @@
   /* ============================================================
    * Persistence
    * ========================================================== */
-  const STORE_KEY = "pg-spotlight-v6";
+  const STORE_KEY = "pg-spotlight-v7";
   let db = { aes: [], entries: [], jerseys: {}, settings: { managerName: "" } };
 
   function save() {
@@ -256,41 +256,8 @@
       photoUrl: "",
     }));
 
-    // Seed a realistic kick-off week so the boards aren't empty.
-    const wk = toISO(mondayOf(parseDate(PROGRAM_START)));
-    const levels = Object.keys(LEVELS);
-    const accounts = [
-      "Helios Bank", "Northwind Logistics", "Aurora Retail", "Vertex Energy",
-      "BluePeak Insurance", "Meridian Health", "Forge Manufacturing", "Cobalt Telecom",
-      "Lumen Media", "Atlas Pharma", "Orbit Mobility", "Granite Capital",
-    ];
-    const entries = [];
-    db.aes.forEach((ae, i) => {
-      if (!isActiveInWeek(ae, wk)) return;
-      const count = 1 + ((i * 7 + 3) % 4); // 1..4 deterministic
-      for (let j = 0; j < count; j++) {
-        const level = levels[(i + j) % 3];
-        const r = (i * 13 + j * 7) % 10;
-        // Seed mostly verified, leave a few pending to demo the manager queue.
-        const pending = r === 0 || r === 7;
-        entries.push({
-          id: uid(),
-          aeId: ae.id,
-          weekKey: wk,
-          level,
-          account: accounts[(i + j) % accounts.length],
-          valuePyramid: r > 3,
-          held: r > 1,
-          calendarised: r > 5,
-          date: toISO(addDays(parseDate(wk), j % 5)),
-          note: "",
-          status: pending ? "pending" : "verified",
-          verifiedBy: pending ? "" : "System (seed)",
-          verifiedAt: pending ? "" : toISO(addDays(parseDate(wk), 4)),
-        });
-      }
-    });
-    db.entries = entries;
+    // Campaign launch state: roster is loaded, but standings start from zero.
+    db.entries = [];
     db.jerseys = {};
   }
 
