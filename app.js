@@ -8,7 +8,7 @@
   /* ============================================================
    * Program configuration (from the PG Spotlight brief)
    * ========================================================== */
-  const PROGRAM_START = "2026-06-15"; // Monday, kick-off
+  const PROGRAM_START = "2026-06-08"; // Monday, kick-off
   const CHEATSHEET_URL =
     "https://docs.google.com/document/d/1OQ-ZzWUa_GYJPjIkmdbvRTMXsesoJccmrae5zxqNRIc/edit?tab=t.0";
   const WEEKLY_WINNER_COUNT = 6;
@@ -164,7 +164,7 @@
   /* ============================================================
    * Persistence
    * ========================================================== */
-  const STORE_KEY = "pg-spotlight-v5";
+  const STORE_KEY = "pg-spotlight-v6";
   let db = { aes: [], entries: [], jerseys: {}, settings: { managerName: "" } };
 
   function save() {
@@ -949,7 +949,7 @@
             <div class="cad"><div class="day">Friday</div><div class="time">16:00</div><div class="desc">EMEA wrap-up — 2 AEs present success stories</div></div>
           </div>
           <ul class="info-list" style="margin-top:16px">
-            <li><span class="dot">▸</span><span><b>Kick-off:</b> 15 June 2026 — Sabiha opens with value stories.</span></li>
+            <li><span class="dot">▸</span><span><b>Kick-off:</b> 8 June 2026 — Sabiha opens with value stories.</span></li>
             <li><span class="dot">▸</span><span><b>RVP submission:</b> Fridays before 12:00 via the shared sheet to present at 16:00.</span></li>
             <li><span class="dot">▸</span><span><b>Focus:</b> Cost / business case, anchored on the Gartner report.</span></li>
             <li><span class="dot">▸</span><span><b>Format:</b> Panini-card participants · tournament-style points · multiplier in the finals.</span></li>
