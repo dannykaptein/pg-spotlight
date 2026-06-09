@@ -8,7 +8,7 @@
   /* ============================================================
    * Program configuration (from the PG Spotlight brief)
    * ========================================================== */
-  const PROGRAM_START = "2026-06-08"; // Monday, kick-off
+  const PROGRAM_START = "2026-06-15"; // Monday, kick-off
   const CHEATSHEET_URL =
     "https://docs.google.com/document/d/1OQ-ZzWUa_GYJPjIkmdbvRTMXsesoJccmrae5zxqNRIc/edit?tab=t.0";
   const WEEKLY_WINNER_COUNT = 6;
@@ -118,7 +118,7 @@
     return toISO(addDays(parseDate(weekKey), 4));
   }
   function isActiveInWeek(ae, weekKey) {
-    return !!ae.startDate && ae.startDate <= weekEndKey(weekKey);
+    return !ae.startDate || ae.startDate <= weekEndKey(weekKey);
   }
   function activeAEsForWeek(weekKey) {
     return db.aes.filter((ae) => isActiveInWeek(ae, weekKey));
@@ -127,18 +127,11 @@
     if (!iso) return "Start date TBD";
     return parseDate(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   }
-  function teamToCountryCode(team) {
-    const t = String(team || "").trim().toLowerCase();
-    const map = {
-      uk: "GB",
-      "united kingdom": "GB",
-      france: "FR",
-      germany: "DE",
-      switzerland: "CH",
-      netherlands: "NL",
-      sweden: "SE",
-    };
-    return map[t] || String(team || "GB").trim().toUpperCase() || "GB";
+  function formatLoggedAt(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return `Logged ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} at ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
   }
 
   /* ============================================================
@@ -164,7 +157,7 @@
   /* ============================================================
    * Persistence
    * ========================================================== */
-  const STORE_KEY = "pg-spotlight-v7";
+  const STORE_KEY = "pg-spotlight-v1";
   let db = { aes: [], entries: [], jerseys: {}, settings: { managerName: "" } };
 
   function save() {
@@ -185,7 +178,7 @@
       try {
         const parsed = JSON.parse(raw);
         db = {
-          aes: (parsed.aes || []).map((ae) => ({ ...ae, photoUrl: ae.photoUrl || "" })),
+          aes: parsed.aes || [],
           // Migrate legacy entries (no status) to "verified" so existing standings persist.
           entries: (parsed.entries || []).map((e) => ({
             ...e,
@@ -206,58 +199,73 @@
   }
 
   /* ============================================================
-   * Seed data — roster from the Names teams PG Spotlight sheet.
-   * Start-date WIP rows stay inactive until a date is filled in.
+   * Seed data — 18 sample AEs + a populated kick-off week.
+   * (All editable; rename to your real roster.)
    * ========================================================== */
   function seed() {
     const roster = [
-      ["Charles Addai-Appiah", "UK", "2026-04-20"],
-      ["James Farnhill", "UK", "2026-05-11"],
-      ["Lauren Caska", "UK", "2026-06-01"],
-      ["Dylan Chambers", "UK", "2026-06-01"],
-      ["Ben Harknett", "UK", "2026-07-06"],
-      ["Jack Ferrari", "UK", "2026-06-08"],
-      ["Karim Chester", "UK", "2026-06-01"],
-      ["Michael Hart", "UK", "2026-06-08"],
-      ["Mounir Ben Saad", "France", "2026-04-12"],
-      ["Julien Le Postec", "France", "2026-05-18"],
-      ["Daniel Campo", "France", "2026-05-25"],
-      ["Aurelien Aissa", "France", "2026-06-15"],
-      ["Robert Glowacz", "Germany", "2026-05-04"],
-      ["Vincent Le Magoariec", "Switzerland", "2026-06-01"],
-      ["Sven Ehlhardt", "Germany", "2026-07-01"],
-      ["Tobias Tritscher", "Germany", "2026-08-05"],
-      ["Joerg Kassner", "Germany", "2026-08-19"],
-      ["Gino Mommers", "Netherlands", "2026-05-11"],
-      ["Jeffrey de Roo", "Netherlands", "2026-06-01"],
-      ["Joren de Graaf", "Netherlands", "2026-06-29"],
-      ["Achraf Artimi", "Netherlands", "2026-07-06"],
-      ["Sjors Bonjer", "Netherlands", "2026-06-29"],
-      ["Mats Millnert", "Sweden", "2026-05-04"],
-      ["Jonathan Falk Sundman", "Sweden", "2026-06-29"],
-      ["Erik Rasmussen", "Sweden", "2026-06-29"],
-      ["Elias Almqvist", "Sweden", "2026-08-03"],
-      ["Sevinc Celebi", "Germany", "2026-06-01"],
-      ["Marcquero Ermoza", "France", ""],
-      ["Nicolas Chahoud", "France", "2026-01-08"],
-      ["Yvonne Kyri", "Germany", "2026-07-01"],
-      ["Pierre Phelippeau", "France", ""],
-      ["Pieter D'Hondt", "Netherlands", "2026-07-01"],
-      ["Alyssa Murre", "UK", "2026-07-01"],
-      ["Tom Gudgeon", "UK", "2026-09-01"],
+      ["Olivia Bennett", "GB", "UK & Ireland", "James Whitfield"],
+      ["Liam O'Connor", "IE", "UK & Ireland", "James Whitfield"],
+      ["Sophie Laurent", "FR", "France", "James Whitfield"],
+      ["Lucas Moreau", "FR", "France", "Camille Dubois"],
+      ["Mia Schneider", "DE", "DACH", "Camille Dubois"],
+      ["Noah Weber", "DE", "DACH", "Camille Dubois"],
+      ["Emma Fischer", "AT", "DACH", "Camille Dubois"],
+      ["Daan Visser", "NL", "Benelux", "Sven Eriksson"],
+      ["Charlotte Janssen", "BE", "Benelux", "Sven Eriksson"],
+      ["Lukas Berg", "SE", "Nordics", "Sven Eriksson"],
+      ["Ingrid Hansen", "NO", "Nordics", "Sven Eriksson"],
+      ["Mette Sørensen", "DK", "Nordics", "Sven Eriksson"],
+      ["Aino Virtanen", "FI", "Nordics", "Sven Eriksson"],
+      ["Mateo Romano", "IT", "Southern Europe", "Paolo Ricci"],
+      ["Lucia Fernández", "ES", "Southern Europe", "Paolo Ricci"],
+      ["Tiago Costa", "PT", "Southern Europe", "Paolo Ricci"],
+      ["Omar Al-Rashid", "AE", "Middle East & Africa", "Paolo Ricci"],
+      ["Thabo Nkosi", "ZA", "Middle East & Africa", "Paolo Ricci"],
     ];
-    db.aes = roster.map(([name, team, startDate]) => ({
+    db.aes = roster.map(([name, code, region, rvp]) => ({
       id: uid(),
       name,
-      country: teamToCountryCode(team),
-      region: team,
-      rvp: "",
-      startDate,
-      photoUrl: "",
+      country: code,
+      region,
+      rvp,
+      startDate: PROGRAM_START,
     }));
 
-    // Campaign launch state: roster is loaded, but standings start from zero.
-    db.entries = [];
+    // Seed a realistic kick-off week so the boards aren't empty.
+    const wk = toISO(mondayOf(parseDate(PROGRAM_START)));
+    const levels = Object.keys(LEVELS);
+    const accounts = [
+      "Helios Bank", "Northwind Logistics", "Aurora Retail", "Vertex Energy",
+      "BluePeak Insurance", "Meridian Health", "Forge Manufacturing", "Cobalt Telecom",
+      "Lumen Media", "Atlas Pharma", "Orbit Mobility", "Granite Capital",
+    ];
+    const entries = [];
+    db.aes.forEach((ae, i) => {
+      const count = 1 + ((i * 7 + 3) % 4); // 1..4 deterministic
+      for (let j = 0; j < count; j++) {
+        const level = levels[(i + j) % 3];
+        const r = (i * 13 + j * 7) % 10;
+        // Seed mostly verified, leave a few pending to demo the manager queue.
+        const pending = r === 0 || r === 7;
+        entries.push({
+          id: uid(),
+          aeId: ae.id,
+          weekKey: wk,
+          level,
+          account: accounts[(i + j) % accounts.length],
+          valuePyramid: r > 3,
+          held: r > 1,
+          calendarised: r > 5,
+          date: toISO(addDays(parseDate(wk), j % 5)),
+          note: "",
+          status: pending ? "pending" : "verified",
+          verifiedBy: pending ? "" : "System (seed)",
+          verifiedAt: pending ? "" : toISO(addDays(parseDate(wk), 4)),
+        });
+      }
+    });
+    db.entries = entries;
     db.jerseys = {};
   }
 
@@ -323,6 +331,7 @@
     lbScope: "week", // week | season
     draft: blankDraft(),
     modal: null, // { mode:'add'|'edit', ae }
+    verifyMgr: "", // filter the verify queue to one manager's AEs
   };
   function blankDraft() {
     return {
@@ -356,10 +365,11 @@
       ${renderTopbar()}
       <div class="app">
         ${renderTabs()}
+        ${renderSyncBanner()}
         ${renderStats()}
         <div id="view">${renderView()}</div>
         <div class="footer-note">
-          PG Spotlight · World Championship PG 2026 · data is stored locally in your browser.
+          PG Spotlight · World Championship PG 2026 · shared team data is connected
         </div>
       </div>
       <div id="toast" class="toast"></div>
@@ -368,6 +378,14 @@
     bindGlobal();
     if (state.tab === "log") bindLogForm();
     renderModal();
+  }
+
+  function renderSyncBanner() {
+    return `
+      <div class="card card-pad" style="margin-bottom:16px;border-color:rgba(46,204,113,0.38);background:rgba(46,204,113,0.08)">
+        <b>Shared competition mode is on.</b>
+        <span style="color:var(--muted)">Everyone's submitted and verified NBMs are syncing into the same leaderboard.</span>
+      </div>`;
   }
 
   function renderTopbar() {
@@ -619,9 +637,6 @@
         const c = countryByCode(ae.country);
         const active = isActiveInWeek(ae, state.weekKey);
         const initials = ae.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-        const avatar = ae.photoUrl
-          ? `<img class="headshot" src="${esc(ae.photoUrl)}" alt="${esc(ae.name)} headshot" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove();this.parentElement.classList.add('missing-photo')" />`
-          : `<span class="initials">${esc(initials)}</span>`;
         const rank = idx + 1;
         const card = paniniRating(s, rank);
         return `
@@ -631,7 +646,7 @@
                 <div class="ovr">${card.ovr}<small>OVR</small></div>
                 <div class="flag">${c.flag}</div>
               </div>
-              <div class="avatar">${avatar}</div>
+              <div class="avatar"><span class="initials">${esc(initials)}</span></div>
               <div class="card-tier">${card.label} · #${rank}</div>
               <div class="pname">${esc(ae.name)}</div>
               <div class="prole">${esc(ae.region)} · ${esc(c.name)}</div>
@@ -695,6 +710,7 @@
                 <select data-field="aeId" required>
                   <option value="">Select AE…</option>${aeOptions}
                 </select>
+                <div class="meta" id="ae-manager-hint" style="margin-top:6px">${d.aeId && managerOf(d.aeId) ? "Verified by: " + esc(managerOf(d.aeId)) : ""}</div>
                 ${activeAEs.length ? "" : `<p style="color:var(--muted);font-size:12px;margin:6px 0 0">No AEs have joined by this week yet.</p>`}
               </div>
               <div class="field">
@@ -780,12 +796,22 @@
   }
 
   /* ---------- Manager verification queue ---------- */
+  function managerOf(aeId) {
+    const ae = db.aes.find((a) => a.id === aeId);
+    return (ae && ae.rvp) || "";
+  }
   function renderVerify() {
-    const weekEntries = entriesForWeek(state.weekKey).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+    const managers = [...new Set(db.aes.map((a) => a.rvp).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const selMgr = state.verifyMgr || "";
+    let weekEntries = entriesForWeek(state.weekKey).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (selMgr) weekEntries = weekEntries.filter((e) => managerOf(e.aeId) === selMgr);
     const pending = weekEntries.filter((e) => e.status === "pending");
     const verified = weekEntries.filter((e) => e.status === "verified");
     const rejected = weekEntries.filter((e) => e.status === "rejected");
     const mgr = (db.settings && db.settings.managerName) || "";
+    const mgrOptions =
+      `<option value="">All managers</option>` +
+      managers.map((m) => `<option value="${esc(m)}" ${selMgr === m ? "selected" : ""}>${esc(m)}</option>`).join("");
 
     const group = (title, list, kind) => {
       if (!list.length && kind !== "pending") return "";
@@ -807,6 +833,8 @@
         <div><h2>Manager Verification</h2>
         <p>Week ${weekNumber(state.weekKey)} · ${weekLabel(state.weekKey)} — verify before Fri 16:00 to lock the standings</p></div>
         <div class="btn-row">
+          <select data-field="verifyMgr" style="min-width:170px">${mgrOptions}</select>
+          ${selMgr ? `<button class="btn ghost sm" data-action="copy-mgr-link">Copy ${esc(selMgr)}'s link</button>` : ""}
           <input type="text" data-field="managerName" value="${esc(mgr)}" placeholder="Your name (RVP / manager)" style="min-width:200px" />
           ${pending.length ? `<button class="btn primary sm" data-action="verify-all">Verify all (${pending.length})</button>` : ""}
         </div>
@@ -845,6 +873,8 @@
         <div class="main">
           <b>${esc(ae ? ae.name : "Unknown")}</b> <span class="badge ${lvl.cls}">${lvl.short}</span>
           <div class="meta">${esc(e.account || "—")}${tags ? " · " + tags : ""}</div>
+          ${ae && ae.rvp ? `<div class="meta">Manager: ${esc(ae.rvp)}</div>` : ""}
+          ${formatLoggedAt(e.createdAt) ? `<div class="vstamp">${formatLoggedAt(e.createdAt)}</div>` : ""}
           ${stamp}
         </div>
         <div class="epts">${entryPoints(e)}</div>
@@ -916,7 +946,7 @@
             <div class="cad"><div class="day">Friday</div><div class="time">16:00</div><div class="desc">EMEA wrap-up — 2 AEs present success stories</div></div>
           </div>
           <ul class="info-list" style="margin-top:16px">
-            <li><span class="dot">▸</span><span><b>Kick-off:</b> 8 June 2026 — Sabiha opens with value stories.</span></li>
+            <li><span class="dot">▸</span><span><b>Kick-off:</b> 15 June 2026 — Sabiha opens with value stories.</span></li>
             <li><span class="dot">▸</span><span><b>RVP submission:</b> Fridays before 12:00 via the shared sheet to present at 16:00.</span></li>
             <li><span class="dot">▸</span><span><b>Focus:</b> Cost / business case, anchored on the Gartner report.</span></li>
             <li><span class="dot">▸</span><span><b>Format:</b> Panini-card participants · tournament-style points · multiplier in the finals.</span></li>
@@ -961,7 +991,7 @@
       return;
     }
     const m = state.modal;
-    const ae = m.ae || { name: "", country: "GB", region: REGIONS[0], rvp: "", startDate: PROGRAM_START, photoUrl: "" };
+    const ae = m.ae || { name: "", country: "GB", region: REGIONS[0], rvp: "", startDate: PROGRAM_START };
     const countryOpts = COUNTRIES.map(
       (c) => `<option value="${c.code}" ${ae.country === c.code ? "selected" : ""}>${c.flag} ${esc(c.name)}</option>`
     ).join("");
@@ -989,10 +1019,6 @@
               <label>Start date</label>
               <input type="date" data-field="startDate" value="${esc(ae.startDate || PROGRAM_START)}" />
             </div>
-            <div class="field" style="margin-top:12px">
-              <label>Approved headshot URL</label>
-              <input type="text" data-field="photoUrl" value="${esc(ae.photoUrl || "")}" placeholder="https://... (with permission)" />
-            </div>
             <div class="btn-row" style="margin-top:18px;justify-content:space-between">
               <div>${m.mode === "edit" ? `<button type="button" class="btn danger" data-action="delete-ae" data-id="${m.ae.id}">Delete</button>` : ""}</div>
               <div class="btn-row">
@@ -1007,7 +1033,7 @@
     form.addEventListener("submit", (ev) => {
       ev.preventDefault();
       const get = (f) => $(`[data-field="${f}"]`, form).value.trim();
-      const data = { name: get("name"), country: get("country"), region: get("region"), rvp: get("rvp"), startDate: get("startDate") || PROGRAM_START, photoUrl: get("photoUrl") };
+      const data = { name: get("name"), country: get("country"), region: get("region"), rvp: get("rvp"), startDate: get("startDate") || PROGRAM_START };
       if (!data.name) return;
       if (m.mode === "edit") {
         Object.assign(m.ae, data);
@@ -1063,6 +1089,13 @@
     if (!actEl) return;
     const action = actEl.getAttribute("data-action");
     const id = actEl.getAttribute("data-id");
+
+    if (action === "copy-mgr-link") {
+      const url = location.origin + location.pathname + "#verify=" + encodeURIComponent(state.verifyMgr || "");
+      copyToClipboard(url);
+      toast("Manager link copied");
+      return;
+    }
 
     switch (action) {
       case "week-prev":
@@ -1179,6 +1212,12 @@
       toast("Jersey selected");
       return;
     }
+    const mgrFilter = ev.target.closest("[data-field='verifyMgr']");
+    if (mgrFilter) {
+      state.verifyMgr = mgrFilter.value;
+      render();
+      return;
+    }
     const mgrInput = ev.target.closest("[data-field='managerName']");
     if (mgrInput) {
       if (!db.settings) db.settings = { managerName: "" };
@@ -1220,6 +1259,7 @@
         status: "pending",
         verifiedBy: "",
         verifiedAt: "",
+        createdAt: new Date().toISOString(),
       });
       const earned = draftPoints(d);
       save();
@@ -1242,6 +1282,8 @@
     // patch preview + checkbox styling without full re-render
     const prev = $("#preview-pts");
     if (prev) prev.textContent = draftPoints(d);
+    const hint = $("#ae-manager-hint");
+    if (hint) hint.textContent = d.aeId && managerOf(d.aeId) ? "Verified by: " + managerOf(d.aeId) : "";
     form.querySelectorAll("[data-check]").forEach((lbl) => {
       const key = lbl.getAttribute("data-check");
       lbl.classList.toggle("on", !!d[key]);
@@ -1251,6 +1293,26 @@
   /* ============================================================
    * Import / export
    * ========================================================== */
+  function copyToClipboard(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch (e) {
+      /* fall through */
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    } catch (e) {
+      /* ignore */
+    }
+  }
   function download(filename, text, type) {
     const blob = new Blob([text], { type: type || "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -1321,9 +1383,9 @@
   }
   function parseFlexibleDate(value) {
     const v = String(value || "").trim();
-    if (!v || /wip|tbd|gitlab/i.test(v)) return "";
+    if (!v) return PROGRAM_START;
     if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-    const slash = v.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+    const slash = v.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
     if (slash) {
       const day = Number(slash[1]);
       const month = Number(slash[2]);
@@ -1331,7 +1393,7 @@
       return toISO(new Date(year, month - 1, day));
     }
     const parsed = new Date(v);
-    return Number.isNaN(parsed.getTime()) ? "" : toISO(parsed);
+    return Number.isNaN(parsed.getTime()) ? PROGRAM_START : toISO(parsed);
   }
   function importRosterText(text) {
     const rows = parseCSV(text);
@@ -1342,11 +1404,9 @@
     const headers = rows[0];
     const nameCol = findCol(headers, ["name", "ae", "account executive", "account executive name", "full name"]);
     const startCol = findCol(headers, ["startdate", "start date", "join date", "joindate", "onboard date", "onboarddate"]);
-    const teamCol = findCol(headers, ["team"]);
-    const countryCol = findCol(headers, ["country", "market", "team"]);
-    const regionCol = findCol(headers, ["region", "segment", "team"]);
+    const countryCol = findCol(headers, ["country", "market"]);
+    const regionCol = findCol(headers, ["region", "segment"]);
     const rvpCol = findCol(headers, ["rvp", "manager", "leader"]);
-    const photoCol = findCol(headers, ["photo", "photo url", "photourl", "headshot", "headshot url", "image", "image url", "linkedin photo", "linkedin photo url"]);
     if (nameCol < 0 || startCol < 0) {
       alert("Could not find required columns. Please export a CSV with at least Name and Start Date columns.");
       return;
@@ -1356,18 +1416,16 @@
     rows.slice(1).forEach((row) => {
       const name = String(row[nameCol] || "").trim();
       if (!name) return;
-      const team = String(row[teamCol] || row[regionCol] || row[countryCol] || "EMEA").trim() || "EMEA";
-      const country = teamToCountryCode(row[countryCol] || team);
-      const region = String(row[regionCol] || team).trim() || "EMEA";
+      const country = String(row[countryCol] || "GB").trim().toUpperCase() || "GB";
+      const region = String(row[regionCol] || "EMEA").trim() || "EMEA";
       const rvp = String(row[rvpCol] || "").trim();
-      const photoUrl = photoCol >= 0 ? String(row[photoCol] || "").trim() : "";
       const startDate = parseFlexibleDate(row[startCol]);
       const key = name.toLowerCase();
       const current = existingByName.get(key);
       if (current) {
-        Object.assign(current, { name, country, region, rvp, startDate, photoUrl: photoUrl || current.photoUrl || "" });
+        Object.assign(current, { name, country, region, rvp, startDate });
       } else {
-        db.aes.push({ id: uid(), name, country, region, rvp, startDate, photoUrl });
+        db.aes.push({ id: uid(), name, country, region, rvp, startDate });
       }
       changed++;
     });
@@ -1399,7 +1457,7 @@
       reader.onload = () => {
         try {
           const parsed = JSON.parse(String(reader.result));
-          db = { aes: (parsed.aes || []).map((ae) => ({ ...ae, photoUrl: ae.photoUrl || "" })), entries: parsed.entries || [], jerseys: parsed.jerseys || {} };
+          db = { aes: parsed.aes || [], entries: parsed.entries || [], jerseys: parsed.jerseys || {} };
           save();
           render();
           toast("Data imported");
@@ -1428,6 +1486,18 @@
   /* ============================================================
    * Boot
    * ========================================================== */
+  function applyDeepLink() {
+    try {
+      const m = (location.hash || "").match(/verify=([^&]+)/);
+      if (m) {
+        state.tab = "verify";
+        state.verifyMgr = decodeURIComponent(m[1].replace(/\+/g, " "));
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
   loadOrSeed();
+  applyDeepLink();
   render();
 })();

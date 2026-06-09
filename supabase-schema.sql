@@ -9,12 +9,17 @@ create table if not exists public.aes (
   country     text,
   region      text,
   rvp         text,
+  start_date  text,
+  photo_url   text,
   created_at  timestamptz default now()
 );
 
+alter table public.aes add column if not exists start_date text;
+alter table public.aes add column if not exists photo_url text;
+
 create table if not exists public.nbm_entries (
   id             text primary key,
-  ae_id          text references public.aes(id) on delete cascade,
+  ae_id          text,
   week_key       text not null,
   level          text not null,
   account        text,
@@ -28,6 +33,8 @@ create table if not exists public.nbm_entries (
   verified_at    text default '',
   created_at     timestamptz default now()
 );
+
+alter table public.nbm_entries add column if not exists created_at timestamptz default now();
 
 create table if not exists public.jerseys (
   week_key  text not null,
