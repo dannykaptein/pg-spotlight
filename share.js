@@ -397,8 +397,10 @@
       return { id: slug(row[0]), name: row[0], country: teamToCountryCode(row[1]), region: row[1], rvp: row[2] || "", startDate: row[3] || "", photoUrl: "" };
     });
   }
-  // One-time authoritative reset: the real roster becomes the single source of
-  // truth — wiping demo data locally, in any stale store keys, and on the server.
+  // One-time per-browser roster seed: the real roster becomes the local source
+  // of truth (clearing demo data locally and in stale store keys). It does NOT
+  // wipe server data — shared NBM entries/jerseys are preserved and adopted via
+  // the next sync. Stable IDs keep the AE upsert idempotent (no duplicates).
   function resetRealRosterOnce() {
     try { if (localStorage.getItem(REAL_ROSTER_FLAG)) return false; } catch (e) { return false; }
     var local = readLocal();
@@ -408,24 +410,21 @@
     try { localStorage.setItem(REAL_ROSTER_FLAG, "1"); } catch (e) {}
     return true;
   }
-  // Force the server to exactly match our local DB (run right after a reset).
+  // Seed the real roster onto the server WITHOUT destroying shared competition
+  // data. This runs once per browser after a roster reset, so it must never
+  // delete nbm_entries or jerseys — otherwise every new AE that opens the app
+  // would wipe everyone else's logged NBMs. We only upsert the roster AEs; the
+  // next sync's 3-way merge then adopts the server's existing entries/jerseys
+  // back into this browser.
   function forceReplaceRemote() {
     var local = readLocal();
-    return pullRemote().then(function (remote) {
-      var keepA = indexById(local.aes), keepE = indexById(local.entries);
-      var delA = remote.aes.filter(function (a) { return !has(keepA, a.id); }).map(function (a) { return a.id; });
-      var delE = remote.entries.filter(function (e) { return !has(keepE, e.id); }).map(function (e) { return e.id; });
-      var keepJ = indexById(jerseysToList(local.jerseys));
-      var delJ = jerseysToList(remote.jerseys).filter(function (x) { return !has(keepJ, x.id); });
-      var ops = [];
-      delE.forEach(function (id) { ops.push(sbDelete("nbm_entries", "id=eq." + encodeURIComponent(id))); });
-      delA.forEach(function (id) { ops.push(sbDelete("aes", "id=eq." + encodeURIComponent(id))); });
-      delJ.forEach(function (x) { ops.push(sbDelete("jerseys", "week_key=eq." + encodeURIComponent(x.week_key) + "&ae_id=eq." + encodeURIComponent(x.ae_id))); });
-      if (local.aes.length) ops.push(sbUpsert("aes", local.aes.map(aeToRow)));
-      if (local.entries.length) ops.push(sbUpsert("nbm_entries", local.entries.map(entryToRow)));
-      var jl = jerseysToList(local.jerseys);
-      if (jl.length) ops.push(sbUpsert("jerseys", jl.map(function (x) { return { week_key: x.week_key, ae_id: x.ae_id, country: x.country }; })));
-      return Promise.all(ops).then(function () { writeSnap(local); });
+    var ops = [];
+    if (local.aes.length) ops.push(sbUpsert("aes", local.aes.map(aeToRow)));
+    return Promise.all(ops).then(function () {
+      // Snapshot the roster-only local state. Because this snapshot has no
+      // entries/jerseys, the very next mergeDB() treats the server's rows as
+      // "added remotely" and pulls them in instead of deleting them.
+      writeSnap(local);
     });
   }
 
