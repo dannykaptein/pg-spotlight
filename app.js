@@ -138,20 +138,21 @@
    * Scoring engine
    * ========================================================== */
   function entryPoints(e) {
+    // Points only start counting once the RVP has confirmed the booking.
+    // A freshly booked (or rejected) meeting scores nothing yet.
+    if (e.status !== "confirmed" && e.status !== "done") return 0;
     const lvl = LEVELS[e.level] || { base: 0 };
-    let p = lvl.base;
-    if (e.valuePyramid) p += 2;
-    if (e.held) p += 2;
-    if (e.calendarised) p += 1;
+    let p = lvl.base; // base counts on confirmation
+    if (e.held) p += 2; // Held: auto-added when the leader marks the meeting done
+    if (e.valuePyramid) p += 2; // leader-ticked after the meeting
+    if (e.calendarised) p += 1; // leader-ticked after the meeting
     return p;
   }
+  // Points an AE locks in the moment the booking is confirmed (preview on the
+  // log form). The outcome bonuses are added later by the leader.
   function draftPoints(d) {
     const lvl = LEVELS[d.level] || { base: 0 };
-    let p = lvl.base;
-    if (d.valuePyramid) p += 2;
-    if (d.held) p += 2;
-    if (d.calendarised) p += 1;
-    return p;
+    return lvl.base;
   }
 
   /* ============================================================
@@ -179,10 +180,12 @@
         const parsed = JSON.parse(raw);
         db = {
           aes: parsed.aes || [],
-          // Migrate legacy entries (no status) to "verified" so existing standings persist.
+          // Migrate legacy statuses to the booked -> confirmed -> done model.
+          // verified meetings were fully counted -> "done"; pending ones were
+          // awaiting the leader -> "booked"; anything unknown defaults to done.
           entries: (parsed.entries || []).map((e) => ({
             ...e,
-            status: e.status || "verified",
+            status: migrateStatus(e.status),
             verifiedBy: e.verifiedBy || "",
             verifiedAt: e.verifiedAt || "",
           })),
@@ -246,22 +249,24 @@
       for (let j = 0; j < count; j++) {
         const level = levels[(i + j) % 3];
         const r = (i * 13 + j * 7) % 10;
-        // Seed mostly verified, leave a few pending to demo the manager queue.
-        const pending = r === 0 || r === 7;
+        // Seed a mix: a few still booked (awaiting confirm), some confirmed,
+        // most done — to demo every stage of the leader workflow.
+        const status = r === 0 || r === 7 ? "booked" : r === 2 || r === 5 ? "confirmed" : "done";
+        const counted = status !== "booked";
         entries.push({
           id: uid(),
           aeId: ae.id,
           weekKey: wk,
           level,
           account: accounts[(i + j) % accounts.length],
-          valuePyramid: r > 3,
-          held: r > 1,
-          calendarised: r > 5,
+          valuePyramid: counted && r > 3,
+          held: status === "done",
+          calendarised: counted && r > 5,
           date: toISO(addDays(parseDate(wk), j % 5)),
           note: "",
-          status: pending ? "pending" : "verified",
-          verifiedBy: pending ? "" : "System (seed)",
-          verifiedAt: pending ? "" : toISO(addDays(parseDate(wk), 4)),
+          status: status,
+          verifiedBy: counted ? "System (seed)" : "",
+          verifiedAt: counted ? toISO(addDays(parseDate(wk), 4)) : "",
         });
       }
     });
@@ -272,15 +277,23 @@
   /* ============================================================
    * Aggregation helpers
    * ========================================================== */
-  function isVerified(e) {
-    return e.status === "verified";
+  // An entry counts toward the standings once the leader has confirmed the
+  // booking (base points) and keeps counting through "done" (with bonuses).
+  function countsTowardStandings(e) {
+    return e.status === "confirmed" || e.status === "done";
+  }
+  function migrateStatus(s) {
+    if (s === "booked" || s === "confirmed" || s === "done" || s === "rejected") return s;
+    if (s === "pending") return "booked";
+    if (s === "verified") return "done";
+    return "done"; // legacy entries with no status were counted
   }
   function entriesForWeek(weekKey) {
     return db.entries.filter((e) => e.weekKey === weekKey);
   }
   function leaderboard(scope, weekKey) {
     // Official standings only count manager-verified NBMs.
-    const pool = (scope === "week" ? entriesForWeek(weekKey) : db.entries).filter(isVerified);
+    const pool = (scope === "week" ? entriesForWeek(weekKey) : db.entries).filter(countsTowardStandings);
     const map = new Map();
     const aes = scope === "week" ? activeAEsForWeek(weekKey) : db.aes;
     aes.forEach((ae) => map.set(ae.id, { ae, points: 0, nbms: 0, held: 0, best: 0 }));
@@ -302,8 +315,8 @@
     db.entries.forEach((e) => {
       if (e.aeId !== aeId) return;
       nbms += 1;
-      if (e.status === "pending") pending += 1;
-      if (!isVerified(e)) return;
+      if (e.status === "booked") pending += 1; // awaiting leader confirmation
+      if (!countsTowardStandings(e)) return;
       points += entryPoints(e);
       if (e.held) held += 1;
     });
@@ -334,13 +347,11 @@
     verifyMgr: "", // filter the verify queue to one manager's AEs
   };
   function blankDraft() {
+    // AEs only book the meeting; outcome bonuses are added by the leader later.
     return {
       aeId: "",
       account: "",
       level: "VP/CTO",
-      valuePyramid: false,
-      held: true,
-      calendarised: false,
       date: "",
       note: "",
     };
@@ -416,7 +427,7 @@
 
   function renderTabs() {
     const weekPending = db.entries.filter(
-      (e) => e.weekKey === state.weekKey && e.status === "pending"
+      (e) => e.weekKey === state.weekKey && e.status === "booked"
     ).length;
     return `
       <div class="tabs">
@@ -434,17 +445,17 @@
 
   function renderStats() {
     const weekEntries = entriesForWeek(state.weekKey);
-    const verified = weekEntries.filter(isVerified);
-    const pending = weekEntries.filter((e) => e.status === "pending").length;
-    const weekPoints = verified.reduce((s, e) => s + entryPoints(e), 0);
-    const seasonPoints = db.entries.filter(isVerified).reduce((s, e) => s + entryPoints(e), 0);
+    const counting = weekEntries.filter(countsTowardStandings);
+    const booked = weekEntries.filter((e) => e.status === "booked").length;
+    const weekPoints = counting.reduce((s, e) => s + entryPoints(e), 0);
+    const seasonPoints = db.entries.filter(countsTowardStandings).reduce((s, e) => s + entryPoints(e), 0);
     const onboard = activeAEsForWeek(state.weekKey).length;
     return `
       <div class="stat-strip">
         <div class="stat"><div class="k">AEs onboard</div><div class="v">${onboard} <small>/ ${db.aes.length}</small></div></div>
-        <div class="stat"><div class="k">NBMs this week</div><div class="v">${weekEntries.length} <small>· ${verified.length} verified · ${pending} pending</small></div></div>
-        <div class="stat"><div class="k">Verified points · week</div><div class="v">${weekPoints}</div></div>
-        <div class="stat"><div class="k">Verified points · season</div><div class="v">${seasonPoints}</div></div>
+        <div class="stat"><div class="k">NBMs this week</div><div class="v">${weekEntries.length} <small>· ${counting.length} counting · ${booked} to confirm</small></div></div>
+        <div class="stat"><div class="k">Points · week</div><div class="v">${weekPoints}</div></div>
+        <div class="stat"><div class="k">Points · season</div><div class="v">${seasonPoints}</div></div>
       </div>`;
   }
 
@@ -470,7 +481,7 @@
       ["🃏", "Panini squad format", "Every participating AE gets a collectible player card. Watch your OVR climb as you bank verified points."],
       ["🏟️", "Tournament style", "Points accumulate week to week in a knock-out-style race. A multiplier boosts scores in the finals."],
       ["🎯", "Cost & business case", "Lead with value. Anchor conversations on the Gartner report and a clear cost / business case."],
-      ["✅", "Verified counts only", "AEs submit NBMs; RVPs verify. Only manager-verified meetings count toward the standings."],
+      ["✅", "Book, confirm, deliver", "AEs book NBMs. The RVP confirms the booking (base points count), then after the meeting marks it done and ticks the value story for the bonus points."],
       ["📈", "Climb the levels", "Higher-seniority meetings score more — a held VP/CTO meeting with a value story and next step is worth the max 8."],
       ["👕", "Win your jersey", `The ${WEEKLY_WINNER_COUNT} weekly winners pick a World Championship jersey — any country, with the Cursor logo.`],
     ];
@@ -507,16 +518,16 @@
         <div class="card card-pad">
           <h2 style="font-size:16px;margin-top:0">✍️ For Account Executives</h2>
           <div class="step-list">
-            <div class="step-row"><span class="n">1</span><div><b>Book & run NBMs</b><p>Target VP/CTO, Director/Head of, and Engineer personas — seniority scores higher.</p></div></div>
-            <div class="step-row"><span class="n">2</span><div><b>Bring the value story</b><p>Use the Value Pyramid / POV and lock in a calendarised next step to max your points.</p></div></div>
-            <div class="step-row"><span class="n">3</span><div><b>Log it before Friday</b><p>Record each meeting in <b>Log NBM</b>. It’s submitted as pending for your RVP to verify.</p></div></div>
+            <div class="step-row"><span class="n">1</span><div><b>Book your NBMs</b><p>Target VP/CTO, Director/Head of, and Engineer personas — seniority scores higher.</p></div></div>
+            <div class="step-row"><span class="n">2</span><div><b>Bring the value story</b><p>Use the Value Pyramid / POV and lock in a next step in the meeting — your RVP ticks these afterwards for bonus points.</p></div></div>
+            <div class="step-row"><span class="n">3</span><div><b>Book it before Friday</b><p>Record each meeting in <b>Log NBM</b>. Base points count as soon as your RVP confirms the booking.</p></div></div>
           </div>
         </div>
         <div class="card card-pad">
           <h2 style="font-size:16px;margin-top:0">✅ For RVPs / Managers</h2>
           <div class="step-list">
-            <div class="step-row"><span class="n">1</span><div><b>Review the queue</b><p>Open <b>Verify</b> to see your team’s submitted NBMs for the week.</p></div></div>
-            <div class="step-row"><span class="n">2</span><div><b>Verify before Fri 12:00</b><p>Verify or reject each meeting — only verified NBMs count toward the standings.</p></div></div>
+            <div class="step-row"><span class="n">1</span><div><b>Confirm bookings</b><p>Open <b>Verify</b> and confirm each booked NBM — base points start counting immediately.</p></div></div>
+            <div class="step-row"><span class="n">2</span><div><b>Mark done & score the outcome</b><p>After the meeting, mark it <b>Done</b> (+2 held) and tick Value Pyramid (+2) and Next step (+1).</p></div></div>
             <div class="step-row"><span class="n">3</span><div><b>Present at 16:00</b><p>Share the standings at the EMEA wrap-up; two AEs present success stories.</p></div></div>
           </div>
         </div>
@@ -684,14 +695,6 @@
     const levelOptions = Object.keys(LEVELS)
       .map((l) => `<option value="${l}" ${d.level === l ? "selected" : ""}>${LEVELS[l].short} (base ${LEVELS[l].base})</option>`)
       .join("");
-    const checks = COMPONENTS.map(
-      (cmp) => `
-        <label class="check ${d[cmp.key] ? "on" : ""}" data-check="${cmp.key}">
-          <input type="checkbox" data-field="${cmp.key}" ${d[cmp.key] ? "checked" : ""} />
-          <span class="ctext"><b>${cmp.label}</b><span>${cmp.hint}</span></span>
-          <span class="cpts">+${cmp.pts}</span>
-        </label>`
-    ).join("");
 
     const recent = entriesForWeek(state.weekKey)
       .slice()
@@ -699,7 +702,7 @@
 
     return `
       <div class="section-head">
-        <div><h2>Log a New Business Meeting</h2><p>Week ${weekNumber(state.weekKey)} · ${weekLabel(state.weekKey)} — RVPs submit before Fri 12:00</p></div>
+        <div><h2>Book a New Business Meeting</h2><p>Week ${weekNumber(state.weekKey)} · ${weekLabel(state.weekKey)} — book it before Fri 12:00; your RVP confirms it and adds the outcome after the meeting</p></div>
       </div>
       <div class="two-col">
         <div class="card card-pad">
@@ -710,7 +713,7 @@
                 <select data-field="aeId" required>
                   <option value="">Select AE…</option>${aeOptions}
                 </select>
-                <div class="meta" id="ae-manager-hint" style="margin-top:6px">${d.aeId && managerOf(d.aeId) ? "Verified by: " + esc(managerOf(d.aeId)) : ""}</div>
+                <div class="meta" id="ae-manager-hint" style="margin-top:6px">${d.aeId && managerOf(d.aeId) ? "Confirmed by: " + esc(managerOf(d.aeId)) : ""}</div>
                 ${activeAEs.length ? "" : `<p style="color:var(--muted);font-size:12px;margin:6px 0 0">No AEs have joined by this week yet.</p>`}
               </div>
               <div class="field">
@@ -726,8 +729,11 @@
                 <input type="date" data-field="date" value="${esc(d.date)}" />
               </div>
               <div class="field full">
-                <label>Scoring components</label>
-                <div class="checks">${checks}</div>
+                <div class="meta" style="background:rgba(7,30,71,.05);border-radius:10px;padding:10px 12px">
+                  Booking locks in the <b>base points</b> once your RVP confirms it.
+                  After the meeting, your RVP marks it <b>Done</b> (+2 held) and ticks
+                  <b>Value Pyramid</b> (+2) and <b>Next step</b> (+1) for the full score.
+                </div>
               </div>
               <div class="field full">
                 <label>Notes (optional)</label>
@@ -735,7 +741,7 @@
               </div>
             </div>
             <div class="btn-row" style="margin-top:16px">
-              <button type="submit" class="btn primary">Log NBM</button>
+              <button type="submit" class="btn primary">Book NBM</button>
               <button type="button" class="btn ghost" data-action="reset-draft">Clear</button>
             </div>
           </form>
@@ -744,7 +750,7 @@
           <div class="points-preview" style="margin-bottom:16px">
             <div>
               <div id="preview-pts" class="big">${draftPoints(d)}</div>
-              <div class="lbl">points · max ${LEVELS[d.level].max}</div>
+              <div class="lbl">base pts on confirm · up to ${LEVELS[d.level].max} when done</div>
             </div>
           </div>
           <div class="card">
@@ -766,11 +772,12 @@
 
   function statusBadge(e) {
     const map = {
-      pending: ["pending", "⏳ Pending"],
-      verified: ["verified", "✓ Verified"],
+      booked: ["pending", "⏳ Booked"],
+      confirmed: ["verified", "📅 Confirmed"],
+      done: ["verified", "✓ Done"],
       rejected: ["rejected", "✕ Rejected"],
     };
-    const [cls, label] = map[e.status] || map.pending;
+    const [cls, label] = map[e.status] || map.booked;
     return `<span class="badge ${cls}">${label}</span>`;
   }
 
@@ -805,16 +812,17 @@
     const selMgr = state.verifyMgr || "";
     let weekEntries = entriesForWeek(state.weekKey).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
     if (selMgr) weekEntries = weekEntries.filter((e) => managerOf(e.aeId) === selMgr);
-    const pending = weekEntries.filter((e) => e.status === "pending");
-    const verified = weekEntries.filter((e) => e.status === "verified");
+    const booked = weekEntries.filter((e) => e.status === "booked");
+    const confirmed = weekEntries.filter((e) => e.status === "confirmed");
+    const done = weekEntries.filter((e) => e.status === "done");
     const rejected = weekEntries.filter((e) => e.status === "rejected");
     const mgr = (db.settings && db.settings.managerName) || "";
     const mgrOptions =
       `<option value="">All managers</option>` +
       managers.map((m) => `<option value="${esc(m)}" ${selMgr === m ? "selected" : ""}>${esc(m)}</option>`).join("");
 
-    const group = (title, list, kind) => {
-      if (!list.length && kind !== "pending") return "";
+    const group = (title, list, kind, emptyMsg) => {
+      if (!list.length && kind !== "booked") return "";
       return `
         <div class="verify-group">
           <div class="gh">${title} <span class="chip"><b>${list.length}</b></span></div>
@@ -822,7 +830,7 @@
             ${
               list.length
                 ? list.map((e) => renderVerifyRow(e, kind)).join("")
-                : `<div class="empty"><div class="ico">🎉</div><p>No pending NBMs — the queue is clear for Week ${weekNumber(state.weekKey)}.</p></div>`
+                : `<div class="empty"><div class="ico">🎉</div><p>${esc(emptyMsg || `No bookings awaiting confirmation for Week ${weekNumber(state.weekKey)}.`)}</p></div>`
             }
           </div>
         </div>`;
@@ -831,16 +839,17 @@
     return `
       <div class="section-head">
         <div><h2>Manager Verification</h2>
-        <p>Week ${weekNumber(state.weekKey)} · ${weekLabel(state.weekKey)} — verify before Fri 16:00 to lock the standings</p></div>
+        <p>Week ${weekNumber(state.weekKey)} · ${weekLabel(state.weekKey)} — confirm bookings (base points), then mark them done and tick the value story</p></div>
         <div class="btn-row">
           <select data-field="verifyMgr" style="min-width:170px">${mgrOptions}</select>
           ${selMgr ? `<button class="btn ghost sm" data-action="copy-mgr-link">Copy ${esc(selMgr)}'s link</button>` : ""}
           <input type="text" data-field="managerName" value="${esc(mgr)}" placeholder="Your name (RVP / manager)" style="min-width:200px" />
-          ${pending.length ? `<button class="btn primary sm" data-action="verify-all">Verify all (${pending.length})</button>` : ""}
+          ${booked.length ? `<button class="btn primary sm" data-action="confirm-all">Confirm all (${booked.length})</button>` : ""}
         </div>
       </div>
-      ${group(`⏳ Pending review`, pending, "pending")}
-      ${group(`✓ Verified — counting toward standings`, verified, "verified")}
+      ${group(`⏳ Booked — confirm to start scoring`, booked, "booked")}
+      ${group(`📅 Confirmed — base points counting`, confirmed, "confirmed")}
+      ${group(`✓ Done — full score counting`, done, "done")}
       ${group(`✕ Rejected`, rejected, "rejected")}`;
   }
 
@@ -848,24 +857,43 @@
     const ae = db.aes.find((a) => a.id === e.aeId);
     const c = countryByCode(ae ? ae.country : "");
     const lvl = LEVELS[e.level] || { cls: "", short: e.level };
-    const tags = [
-      e.valuePyramid ? "POV" : null,
-      e.held ? "Held" : null,
-      e.calendarised ? "Next step" : null,
-    ].filter(Boolean).join(" · ");
+    // Outcome state is shown via the toggle buttons below, so keep the meta line
+    // to just the account here.
+    const tags = "";
     let acts = "";
-    if (kind === "pending") {
+    if (kind === "booked") {
       acts = `
-        <button class="btn primary sm" data-action="verify-entry" data-id="${e.id}">Verify</button>
+        <button class="btn primary sm" data-action="confirm-entry" data-id="${e.id}">Confirm</button>
         <button class="btn danger sm" data-action="reject-entry" data-id="${e.id}">Reject</button>`;
-    } else if (kind === "verified") {
-      acts = `<button class="btn ghost sm" data-action="unverify-entry" data-id="${e.id}">Revert</button>`;
+    } else if (kind === "confirmed") {
+      acts = `
+        <button class="btn primary sm" data-action="mark-done" data-id="${e.id}">Mark done</button>
+        <button class="btn ghost sm" data-action="revert-booked" data-id="${e.id}">Revert</button>`;
+    } else if (kind === "done") {
+      acts = `<button class="btn ghost sm" data-action="revert-confirmed" data-id="${e.id}">Reopen</button>`;
     } else {
-      acts = `<button class="btn ghost sm" data-action="unverify-entry" data-id="${e.id}">Restore</button>`;
+      acts = `<button class="btn ghost sm" data-action="revert-booked" data-id="${e.id}">Restore</button>`;
     }
+
+    // After the meeting, the leader ticks the value-story bonuses (live points).
+    let outcome = "";
+    if (kind === "confirmed" || kind === "done") {
+      const toggle = (comp, label, pts) =>
+        `<button class="btn sm ${e[comp] ? "primary" : "ghost"}" data-action="toggle-comp" data-id="${e.id}" data-comp="${comp}">${e[comp] ? "✓ " : ""}${label} +${pts}</button>`;
+      const heldChip = kind === "done"
+        ? `<span class="badge verified" title="Auto-added when marked done">✓ Held +2</span>`
+        : "";
+      outcome = `
+        <div class="outcome-row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+          ${heldChip}
+          ${toggle("valuePyramid", "Value Pyramid", 2)}
+          ${toggle("calendarised", "Next step", 1)}
+        </div>`;
+    }
+
     const stamp =
-      e.status !== "pending" && e.verifiedBy
-        ? `<div class="vstamp">${e.status === "verified" ? "Verified" : "Rejected"} by ${esc(e.verifiedBy)}</div>`
+      (e.status === "confirmed" || e.status === "done" || e.status === "rejected") && e.verifiedBy
+        ? `<div class="vstamp">${e.status === "rejected" ? "Rejected" : e.status === "done" ? "Done" : "Confirmed"} by ${esc(e.verifiedBy)}</div>`
         : "";
     return `
       <div class="entry">
@@ -876,6 +904,7 @@
           ${ae && ae.rvp ? `<div class="meta">Manager: ${esc(ae.rvp)}</div>` : ""}
           ${formatLoggedAt(e.createdAt) ? `<div class="vstamp">${formatLoggedAt(e.createdAt)}</div>` : ""}
           ${stamp}
+          ${outcome}
         </div>
         <div class="epts">${entryPoints(e)}</div>
         <div class="acts">${acts}</div>
@@ -1055,7 +1084,9 @@
     const e = db.entries.find((x) => x.id === id);
     if (!e) return;
     e.status = status;
-    if (status === "pending") {
+    // Held (+2) is auto-tied to "done"; confirming or reverting clears it.
+    e.held = status === "done";
+    if (status === "booked") {
       e.verifiedBy = "";
       e.verifiedAt = "";
     } else {
@@ -1064,7 +1095,25 @@
     }
     save();
     render();
-    toast(status === "verified" ? "NBM verified" : status === "rejected" ? "NBM rejected" : "Moved to pending");
+    const msg = {
+      booked: "Moved back to booked",
+      confirmed: "Booking confirmed · base points now counting",
+      done: "Marked done · Held +2 added",
+      rejected: "NBM rejected",
+    }[status] || "Updated";
+    toast(msg);
+  }
+  // Leader toggles a post-meeting bonus (Value Pyramid / Next step). Only
+  // meaningful once the booking is confirmed, when points are live.
+  function toggleEntryComponent(id, comp) {
+    if (comp !== "valuePyramid" && comp !== "calendarised") return;
+    const e = db.entries.find((x) => x.id === id);
+    if (!e) return;
+    if (e.status !== "confirmed" && e.status !== "done") return;
+    e[comp] = !e[comp];
+    if (!e.verifiedBy) e.verifiedBy = (db.settings && db.settings.managerName) || "Manager";
+    save();
+    render();
   }
 
   function bindGlobal() {
@@ -1146,21 +1195,31 @@
         render();
         toast("Entry deleted");
         break;
-      case "verify-entry":
-        setEntryStatus(id, "verified");
+      case "confirm-entry":
+        setEntryStatus(id, "confirmed");
+        break;
+      case "mark-done":
+        setEntryStatus(id, "done");
+        break;
+      case "revert-confirmed":
+        setEntryStatus(id, "confirmed");
+        break;
+      case "revert-booked":
+        setEntryStatus(id, "booked");
         break;
       case "reject-entry":
         setEntryStatus(id, "rejected");
         break;
-      case "unverify-entry":
-        setEntryStatus(id, "pending");
+      case "toggle-comp":
+        toggleEntryComponent(id, actEl.getAttribute("data-comp"));
         break;
-      case "verify-all": {
+      case "confirm-all": {
         const mgr = (db.settings && db.settings.managerName) || "Manager";
         let n = 0;
         db.entries.forEach((e) => {
-          if (e.weekKey === state.weekKey && e.status === "pending") {
-            e.status = "verified";
+          if (e.weekKey === state.weekKey && e.status === "booked") {
+            e.status = "confirmed";
+            e.held = false;
             e.verifiedBy = mgr;
             e.verifiedAt = new Date().toISOString();
             n++;
@@ -1168,7 +1227,7 @@
         });
         save();
         render();
-        toast(`Verified ${n} NBM${n === 1 ? "" : "s"}`);
+        toast(`Confirmed ${n} booking${n === 1 ? "" : "s"}`);
         break;
       }
       case "export-week":
@@ -1251,23 +1310,24 @@
         weekKey: state.weekKey,
         level: d.level,
         account: d.account,
-        valuePyramid: d.valuePyramid,
-        held: d.held,
-        calendarised: d.calendarised,
+        // Outcome bonuses start empty — the leader fills these in after the meeting.
+        valuePyramid: false,
+        held: false,
+        calendarised: false,
         date: d.date || toISO(parseDate(state.weekKey)),
         note: d.note,
-        status: "pending",
+        status: "booked",
         verifiedBy: "",
         verifiedAt: "",
         createdAt: new Date().toISOString(),
       });
-      const earned = draftPoints(d);
+      const base = draftPoints(d);
       save();
       const keepAe = d.aeId;
       state.draft = blankDraft();
       state.draft.aeId = keepAe;
       render();
-      toast(`NBM submitted · +${earned} pts pending verification`);
+      toast(`NBM booked · +${base} base pts once your RVP confirms`);
     });
   }
 
@@ -1279,15 +1339,11 @@
       const f = el.getAttribute("data-field");
       d[f] = el.type === "checkbox" ? el.checked : el.value;
     });
-    // patch preview + checkbox styling without full re-render
+    // patch base-points preview + the confirmer hint without a full re-render
     const prev = $("#preview-pts");
     if (prev) prev.textContent = draftPoints(d);
     const hint = $("#ae-manager-hint");
-    if (hint) hint.textContent = d.aeId && managerOf(d.aeId) ? "Verified by: " + managerOf(d.aeId) : "";
-    form.querySelectorAll("[data-check]").forEach((lbl) => {
-      const key = lbl.getAttribute("data-check");
-      lbl.classList.toggle("on", !!d[key]);
-    });
+    if (hint) hint.textContent = d.aeId && managerOf(d.aeId) ? "Confirmed by: " + managerOf(d.aeId) : "";
   }
 
   /* ============================================================
