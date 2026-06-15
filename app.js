@@ -277,6 +277,8 @@
           status: status,
           verifiedBy: counted ? "System (seed)" : "",
           verifiedAt: counted ? toISO(addDays(baseMon, 4)) : "",
+          // Booking timestamp drives the week (see weekKeyForDate).
+          createdAt: bookingDate + "T09:00:00.000Z",
         });
       }
     });

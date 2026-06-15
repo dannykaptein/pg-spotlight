@@ -88,6 +88,15 @@
     });
     return db;
   }
+  // Monday (date-only, UTC-safe) of an ISO date or datetime string.
+  function mondayISO(iso) {
+    var s = String(iso || "").slice(0, 10).split("-");
+    if (s.length < 3) return "";
+    var dt = new Date(Date.UTC(+s[0], +s[1] - 1, +s[2]));
+    if (isNaN(dt.getTime())) return "";
+    dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+    return dt.toISOString().slice(0, 10);
+  }
   function readLocal() {
     try { return normalize(JSON.parse(localStorage.getItem(storeKey()) || "null")); }
     catch (e) { return normalize(null); }
@@ -428,6 +437,28 @@
     });
   }
 
+  // One-time migration: an NBM belongs to the week it was BOOKED in, so its
+  // weekKey is recomputed from its booking timestamp (createdAt). This runs once
+  // per browser; because every browser applies the same deterministic fix, the
+  // corrected weeks sync up to Supabase and become shared for the whole team
+  // (no manual server edits needed). Entries without a booking timestamp are
+  // left untouched.
+  var BOOKING_WEEK_FLAG = "pg-booking-week-v1";
+  function migrateBookingWeekOnce() {
+    try { if (localStorage.getItem(BOOKING_WEEK_FLAG)) return false; } catch (e) { return false; }
+    var local = readLocal();
+    var changed = false;
+    (local.entries || []).forEach(function (e) {
+      if (e && e.createdAt) {
+        var wk = mondayISO(e.createdAt);
+        if (wk && e.weekKey !== wk) { e.weekKey = wk; changed = true; }
+      }
+    });
+    if (changed) writeLocal(local);
+    try { localStorage.setItem(BOOKING_WEEK_FLAG, "1"); } catch (e) {}
+    return changed;
+  }
+
   // Stamp managers into the locally stored DB immediately (so app.js, which reads
   // localStorage directly, shows them on the very next render).
   function backfillLocalManagers() {
@@ -452,12 +483,13 @@
     cleanupStaleKeys();
     var didReset = resetRealRosterOnce();
     var stamped = backfillLocalManagers();
+    var reweeked = migrateBookingWeekOnce();
     if (didReset) {
       forceReplaceRemote()
         .then(function () { setOk(); pendingReload = true; tryReload(); })
         .catch(function (err) { setErr(String((err && err.message) || err)); pendingReload = true; tryReload(); });
     } else {
-      if (stamped) { pendingReload = true; tryReload(); }
+      if (stamped || reweeked) { pendingReload = true; tryReload(); }
       syncOnce();
     }
     setInterval(syncOnce, POLL_MS);
