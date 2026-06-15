@@ -114,6 +114,10 @@
     const startMon = mondayOf(parseDate(PROGRAM_START));
     return toISO(todayMon < startMon ? startMon : todayMon);
   }
+  // An NBM belongs to the week it was booked in: the Monday of its booking date.
+  function weekKeyForDate(dateISO) {
+    return toISO(mondayOf(dateISO ? parseDate(dateISO) : new Date()));
+  }
   function weekEndKey(weekKey) {
     return toISO(addDays(parseDate(weekKey), 4));
   }
@@ -235,8 +239,11 @@
       startDate: PROGRAM_START,
     }));
 
-    // Seed a realistic kick-off week so the boards aren't empty.
-    const wk = toISO(mondayOf(parseDate(PROGRAM_START)));
+    // Seed realistic bookings across last week and this week so the week
+    // navigation has data on both sides. Each NBM's week is derived from its
+    // booking date (see weekKeyForDate), matching how live bookings behave.
+    const thisWeek = mondayOf(parseDate(PROGRAM_START));
+    const lastWeek = addDays(thisWeek, -7);
     const levels = Object.keys(LEVELS);
     const accounts = [
       "Helios Bank", "Northwind Logistics", "Aurora Retail", "Vertex Energy",
@@ -253,20 +260,23 @@
         // most done — to demo every stage of the leader workflow.
         const status = r === 0 || r === 7 ? "booked" : r === 2 || r === 5 ? "confirmed" : "done";
         const counted = status !== "booked";
+        // Spread bookings across last week and this week by booking date.
+        const baseMon = (i + j) % 2 === 0 ? lastWeek : thisWeek;
+        const bookingDate = toISO(addDays(baseMon, (i + j) % 5));
         entries.push({
           id: uid(),
           aeId: ae.id,
-          weekKey: wk,
+          weekKey: weekKeyForDate(bookingDate),
           level,
           account: accounts[(i + j) % accounts.length],
           valuePyramid: counted && r > 3,
           held: status === "done",
           calendarised: counted && r > 5,
-          date: toISO(addDays(parseDate(wk), j % 5)),
+          date: bookingDate,
           note: "",
           status: status,
           verifiedBy: counted ? "System (seed)" : "",
-          verifiedAt: counted ? toISO(addDays(parseDate(wk), 4)) : "",
+          verifiedAt: counted ? toISO(addDays(baseMon, 4)) : "",
         });
       }
     });
@@ -352,7 +362,7 @@
       aeId: "",
       account: "",
       level: "VP/CTO",
-      date: "",
+      date: toISO(new Date()),
       note: "",
     };
   }
@@ -1299,22 +1309,25 @@
         toast("Pick an AE first");
         return;
       }
+      const bookingDate = d.date || toISO(new Date());
+      const bookingWeek = weekKeyForDate(bookingDate);
       const selectedAE = db.aes.find((ae) => ae.id === d.aeId);
-      if (selectedAE && !isActiveInWeek(selectedAE, state.weekKey)) {
-        toast("This AE has not joined by the selected week");
+      if (selectedAE && !isActiveInWeek(selectedAE, bookingWeek)) {
+        toast("This AE has not joined by the booked week");
         return;
       }
       db.entries.push({
         id: uid(),
         aeId: d.aeId,
-        weekKey: state.weekKey,
+        // The booking date drives which week the NBM lands in.
+        weekKey: bookingWeek,
         level: d.level,
         account: d.account,
         // Outcome bonuses start empty — the leader fills these in after the meeting.
         valuePyramid: false,
         held: false,
         calendarised: false,
-        date: d.date || toISO(parseDate(state.weekKey)),
+        date: bookingDate,
         note: d.note,
         status: "booked",
         verifiedBy: "",
@@ -1326,6 +1339,8 @@
       const keepAe = d.aeId;
       state.draft = blankDraft();
       state.draft.aeId = keepAe;
+      // Jump to the week the NBM was booked in so it's visible immediately.
+      state.weekKey = bookingWeek;
       render();
       toast(`NBM booked · +${base} base pts once your RVP confirms`);
     });
