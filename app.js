@@ -1309,8 +1309,10 @@
         toast("Pick an AE first");
         return;
       }
-      const bookingDate = d.date || toISO(new Date());
-      const bookingWeek = weekKeyForDate(bookingDate);
+      // The NBM belongs to the week it is booked in (now) — not the meeting
+      // date, which may be scheduled for a later week.
+      const bookingWeek = weekKeyForDate();
+      const meetingDate = d.date || toISO(new Date());
       const selectedAE = db.aes.find((ae) => ae.id === d.aeId);
       if (selectedAE && !isActiveInWeek(selectedAE, bookingWeek)) {
         toast("This AE has not joined by the booked week");
@@ -1319,7 +1321,7 @@
       db.entries.push({
         id: uid(),
         aeId: d.aeId,
-        // The booking date drives which week the NBM lands in.
+        // The booking week is when the NBM was booked, regardless of meeting date.
         weekKey: bookingWeek,
         level: d.level,
         account: d.account,
@@ -1327,7 +1329,7 @@
         valuePyramid: false,
         held: false,
         calendarised: false,
-        date: bookingDate,
+        date: meetingDate,
         note: d.note,
         status: "booked",
         verifiedBy: "",
