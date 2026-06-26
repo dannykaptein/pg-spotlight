@@ -303,12 +303,49 @@
   function entriesForWeek(weekKey) {
     return db.entries.filter((e) => e.weekKey === weekKey);
   }
+  function aeById(id) {
+    return db.aes.find((a) => a.id === id) || null;
+  }
+  // Points for one AE in one booking week (confirmed/done NBMs only).
+  function weekPointsForAe(aeId, weekKey) {
+    return entriesForWeek(weekKey)
+      .filter((e) => e.aeId === aeId && countsTowardStandings(e))
+      .reduce((s, e) => s + entryPoints(e), 0);
+  }
+  // Distinct booking weeks that have at least one counting NBM for this AE.
+  function weeksWithPoints(aeId) {
+    const weeks = new Set();
+    db.entries.forEach((e) => {
+      if (e.aeId === aeId && countsTowardStandings(e) && entryPoints(e) > 0) {
+        weeks.add(e.weekKey || weekKeyForDate(e.createdAt || e.date));
+      }
+    });
+    return weeks;
+  }
   function leaderboard(scope, weekKey) {
     // Official standings only count manager-verified NBMs.
-    const pool = (scope === "week" ? entriesForWeek(weekKey) : db.entries).filter(countsTowardStandings);
+    // Week = that week's bookings only. Season = sum of every week's points per AE.
+    const isSeason = scope === "season";
+    const pool = (isSeason ? db.entries : entriesForWeek(weekKey)).filter(countsTowardStandings);
     const map = new Map();
-    const aes = scope === "week" ? activeAEsForWeek(weekKey) : db.aes;
-    aes.forEach((ae) => map.set(ae.id, { ae, points: 0, nbms: 0, held: 0, best: 0 }));
+    const seedAes = isSeason ? db.aes : activeAEsForWeek(weekKey);
+    seedAes.forEach((ae) => {
+      map.set(ae.id, { ae, points: 0, nbms: 0, held: 0, best: 0, weeks: 0 });
+    });
+    // Include any AE ids that have entries but aren't on the roster snapshot
+    // so season totals never silently drop points.
+    pool.forEach((e) => {
+      if (map.has(e.aeId)) return;
+      const ae = aeById(e.aeId) || {
+        id: e.aeId,
+        name: "Unknown AE",
+        country: "",
+        region: "",
+        rvp: "",
+        startDate: "",
+      };
+      map.set(e.aeId, { ae, points: 0, nbms: 0, held: 0, best: 0, weeks: 0 });
+    });
     pool.forEach((e) => {
       const row = map.get(e.aeId);
       if (!row) return;
@@ -318,6 +355,22 @@
       if (e.held) row.held += 1;
       if (p > row.best) row.best = p;
     });
+    if (isSeason) {
+      map.forEach((row, aeId) => {
+        row.weeks = weeksWithPoints(aeId).size;
+        // Season total must equal the sum of each week's points for that AE.
+        let byWeek = 0;
+        const weekKeys = new Set();
+        db.entries.forEach((e) => {
+          if (e.aeId !== aeId || !countsTowardStandings(e)) return;
+          weekKeys.add(e.weekKey || weekKeyForDate(e.createdAt || e.date));
+        });
+        weekKeys.forEach((wk) => {
+          byWeek += weekPointsForAe(aeId, wk);
+        });
+        row.points = byWeek;
+      });
+    }
     return [...map.values()].sort(
       (a, b) => b.points - a.points || b.held - a.held || a.ae.name.localeCompare(b.ae.name)
     );
@@ -560,10 +613,16 @@
 
   /* ---------- Leaderboard ---------- */
   function renderLeaderboard() {
+    const isSeason = state.lbScope === "season";
     const rows = leaderboard(state.lbScope, state.weekKey);
     const ranked = rows.filter((r) => r.points > 0);
     const max = ranked.length ? ranked[0].points : 1;
-    const scopeLabel = state.lbScope === "week" ? `Week ${weekNumber(state.weekKey)}` : "Full season";
+    const scopeLabel = isSeason
+      ? "Season standings (all weeks combined)"
+      : `Week ${weekNumber(state.weekKey)}`;
+    const scopeHint = isSeason
+      ? "Every AE's season total is the sum of their points from each booking week"
+      : `Top ${WEEKLY_WINNER_COUNT} take a jersey this week`;
 
     const podium = ranked.slice(0, 3);
     const podiumOrder = [podium[1], podium[0], podium[2]]; // 2nd, 1st, 3rd
@@ -576,6 +635,9 @@
               if (!r) return `<div></div>`;
               const rank = podium.indexOf(r);
               const c = countryByCode(r.ae.country);
+              const weekNote = isSeason && r.weeks
+                ? `<div class="rg" style="margin-top:4px">${r.weeks} week${r.weeks === 1 ? "" : "s"} scored</div>`
+                : "";
               return `
                 <div class="podium-card p${rank + 1}">
                   <div class="podium-rank">${rank + 1}</div>
@@ -584,17 +646,22 @@
                   <div class="nm">${esc(r.ae.name)}</div>
                   <div class="rg">${esc(r.ae.region)}</div>
                   <div class="pts">${r.points}<small> pts</small></div>
+                  ${weekNote}
                 </div>`;
             })
             .join("")}
         </div>`
       : "";
 
+    const colSpan = isSeason ? 6 : 5;
     const tableRows = ranked.length
       ? ranked
           .map((r, i) => {
             const c = countryByCode(r.ae.country);
             const pct = Math.max(6, Math.round((r.points / max) * 100));
+            const weeksCell = isSeason
+              ? `<td class="num">${r.weeks || 0}</td>`
+              : "";
             return `
               <tr>
                 <td class="rankcell ${i < 3 ? "top" : ""}">${i + 1}</td>
@@ -606,24 +673,30 @@
                 </td>
                 <td class="num">${r.nbms}</td>
                 <td class="num">${r.held}</td>
+                ${weeksCell}
                 <td>
-                  <div class="ptscell">${r.points}</div>
+                  <div class="ptscell">${r.points}${isSeason ? `<small style="display:block;font-weight:500;color:var(--muted);font-size:11px">season total</small>` : ""}</div>
                   <div class="bar"><span style="width:${pct}%"></span></div>
                 </td>
               </tr>`;
           })
           .join("")
-      : `<tr><td colspan="5"><div class="empty"><div class="ico">⚽</div><h3>No points logged yet</h3><p>Log NBMs to populate the ${scopeLabel.toLowerCase()} board.</p></div></td></tr>`;
+      : `<tr><td colspan="${colSpan}"><div class="empty"><div class="ico">⚽</div><h3>No points logged yet</h3><p>Log NBMs to populate the ${isSeason ? "season" : "weekly"} board.</p></div></td></tr>`;
+
+    const weeksHeader = isSeason
+      ? `<th class="num" title="Booking weeks with scoring NBMs">Weeks</th>`
+      : "";
+    const pointsHeader = isSeason ? "Season pts" : "Points";
 
     return `
       <div class="section-head">
         <div>
           <h2>Leaderboard</h2>
-          <p>Tournament-style standings · ${scopeLabel} · top ${WEEKLY_WINNER_COUNT} take a jersey</p>
+          <p>${scopeLabel} · ${scopeHint}</p>
         </div>
         <div class="seg">
-          <button class="${state.lbScope === "week" ? "active" : ""}" data-scope="week">This week</button>
-          <button class="${state.lbScope === "season" ? "active" : ""}" data-scope="season">Season</button>
+          <button class="${!isSeason ? "active" : ""}" data-scope="week">This week</button>
+          <button class="${isSeason ? "active" : ""}" data-scope="season">Season</button>
         </div>
       </div>
       ${podiumHTML}
@@ -632,7 +705,9 @@
           <thead>
             <tr>
               <th>#</th><th>Account Executive</th>
-              <th class="num">NBMs</th><th class="num">Held</th><th>Points</th>
+              <th class="num">NBMs</th><th class="num">Held</th>
+              ${weeksHeader}
+              <th>${pointsHeader}</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
