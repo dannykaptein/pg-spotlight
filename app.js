@@ -487,7 +487,7 @@
   function renderSyncBanner() {
     const auto = db.entries.filter((e) => e.source === "calendar" && withinReporting(e)).length;
     const autoNote = auto
-      ? ` <b>${auto}</b> NBM${auto === 1 ? "" : "s"} tracked so far.`
+      ? ` <b>${auto}</b> external meeting${auto === 1 ? "" : "s"} tracked so far.`
       : "";
     return `
       <div class="card" style="margin-bottom:20px;display:flex;align-items:center;gap:12px;padding:14px 18px;border-left:3px solid var(--green)">
@@ -525,18 +525,19 @@
   }
 
   function renderStats() {
-    const weekEntries = entriesForWeek(state.weekKey).filter(countsTowardStandings);
-    const weekHeld = weekEntries.filter((e) => e.held).length;
-    const allTime = db.entries.filter(countsTowardStandings);
-    const allHeld = allTime.filter((e) => e.held).length;
+    // Quarterly tracker: everything is framed from the reporting start (1 Aug) and
+    // counts real external meetings, with tagged NBMs shown as a subset.
+    const meetings = db.entries.filter((e) => e.source === "calendar" && withinReporting(e));
+    const held = meetings.filter((e) => e.held).length;
+    const nbm = meetings.filter((e) => meetingType(e) === "NBM").length;
     const active = db.aes.filter((a) => a.active !== false).length;
-    const heldRate = allTime.length ? Math.round((allHeld / allTime.length) * 100) : 0;
+    const heldRate = meetings.length ? Math.round((held / meetings.length) * 100) : 0;
     return `
       <div class="stat-strip">
         <div class="stat"><div class="k">AEs on the board</div><div class="v">${active} <small>/ ${db.aes.length}</small></div></div>
-        <div class="stat"><div class="k">NBMs this week</div><div class="v">${weekEntries.length} <small>· ${weekHeld} held</small></div></div>
-        <div class="stat"><div class="k">NBMs since 1 Aug</div><div class="v">${allTime.length}</div></div>
-        <div class="stat"><div class="k">Held rate · since 1 Aug</div><div class="v">${heldRate}% <small>· ${allHeld} held</small></div></div>
+        <div class="stat"><div class="k">External meetings · since 1 Aug</div><div class="v">${meetings.length}</div></div>
+        <div class="stat"><div class="k">Tagged NBMs · since 1 Aug</div><div class="v">${nbm}</div></div>
+        <div class="stat"><div class="k">Held rate · since 1 Aug</div><div class="v">${heldRate}% <small>· ${held} held</small></div></div>
       </div>`;
   }
 
