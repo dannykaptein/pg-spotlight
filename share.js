@@ -1,4 +1,4 @@
-/* PG Spotlight — shared team sync (Supabase).
+/* EMEA AE Activity Tracker — shared team sync (Supabase).
  *
  * This file is intentionally self-contained so it keeps working even if app.js
  * is reset by an editor. It syncs at the localStorage layer:

@@ -1,4 +1,4 @@
-// PG Dashboard — calendar-sync edge function (Supabase / Deno).
+// EMEA AE Activity Tracker — calendar-sync edge function (Supabase / Deno).
 //
 // Reads each active AE's Google Calendar (centrally, via a Google Workspace
 // service account with domain-wide delegation), detects external New Business

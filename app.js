@@ -1,4 +1,4 @@
-/* PG Dashboard — EMEA Pipeline Generation
+/* EMEA AE Activity Tracker — EMEA Pipeline Generation
  * Ongoing team NBM (New Business Meeting) tracker. Dependency-free vanilla JS.
  * Data persists in localStorage and syncs to Supabase (see share.js). NBMs can
  * be logged manually or auto-tracked from the team's Google Calendars by the

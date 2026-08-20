@@ -1,10 +1,10 @@
--- PG Dashboard (EMEA) — shared backend schema (run in the Supabase SQL editor).
+-- EMEA AE Activity Tracker — shared backend schema (run in the Supabase SQL editor).
 -- Creates the tables the app syncs, plus permissive RLS policies so the public
 -- anon key can read/write. Tighten these policies (e.g. require auth) before
 -- using with sensitive data.
 --
 -- This file is idempotent: re-running it only adds what is missing, so it safely
--- upgrades an existing "PG Spotlight" database to the ongoing dashboard model
+-- upgrades an existing database to the ongoing tracker model
 -- with automatic calendar-based NBM tracking.
 
 create table if not exists public.aes (

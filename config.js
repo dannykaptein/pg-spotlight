@@ -1,4 +1,4 @@
-/* PG Spotlight — shared backend configuration.
+/* EMEA AE Activity Tracker — shared backend configuration.
  *
  * Shared team mode is ON: the app syncs to Supabase (see share.js), so everyone
  * who opens it sees the same live ranking. The values below are also baked into
