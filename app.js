@@ -77,6 +77,19 @@
     "Southern Europe",
     "Nordics",
   ];
+  // Region-level flags. GEO Enterprise is pan-European (🇪🇺); the rest use a
+  // representative flag for the region. Unknown regions fall back to 🇪🇺.
+  const REGION_FLAGS = {
+    "GEO Enterprise": "🇪🇺",
+    UKI: "🇬🇧",
+    Benelux: "🇳🇱🇧🇪",
+    "Central Europe": "🇩🇪",
+    "Southern Europe": "🇪🇸🇫🇷",
+    Nordics: "🇸🇪🇩🇰",
+  };
+  function regionFlag(region) {
+    return REGION_FLAGS[region] || "🇪🇺";
+  }
 
   /* ============================================================
    * Utilities
@@ -679,7 +692,7 @@
     const regionCard = `
       <div class="card card-pad">
         <h2 style="font-size:16px;margin-top:0">By region</h2>
-        ${regionRows.map(([r, n]) => barRow(esc(r), n, regionMax)).join("") || "<p class='meta'>No data.</p>"}
+        ${regionRows.map(([r, n]) => barRow(regionFlag(r) + " " + esc(r), n, regionMax)).join("") || "<p class='meta'>No data.</p>"}
       </div>`;
 
     // Breakdown by meeting type.
@@ -698,14 +711,12 @@
     const maxN = rows.length ? rows[0].nbms : 1;
     const tableRows = rows.length
       ? rows.map((r) => {
-          const c = countryByCode(r.ae.country);
           const pct = Math.max(6, Math.round((r.nbms / maxN) * 100));
           const hr = r.nbms ? Math.round((r.held / r.nbms) * 100) : 0;
           return `
             <tr>
               <td>
                 <div class="ae">
-                  <span class="flag">${c.flag}</span>
                   <span><span class="nm">${esc(r.ae.name)}</span><br><span class="rg">${esc(r.ae.region)}${r.ae.rvp ? " · " + esc(r.ae.rvp) : ""}</span></span>
                 </div>
               </td>
@@ -848,13 +859,11 @@
             typeKeys.forEach((k) => { sub[k] += row[k]; grand[k] += row[k]; });
             subTotal += rowTotal;
             grandTotal += rowTotal;
-            const c = countryByCode(ae.country);
             const cells = typeKeys.map((k) => `<td class="num">${row[k] || 0}</td>`).join("");
             return `
               <tr>
                 <td>
                   <div class="ae">
-                    <span class="flag">${c.flag}</span>
                     <span><span class="nm">${esc(ae.name)}</span><br><span class="rg">${esc(ae.region)}${ae.rvp ? " · " + esc(ae.rvp) : ""}</span></span>
                   </div>
                 </td>
@@ -865,7 +874,7 @@
           .join("");
         const subCells = typeKeys.map((k) => `<td class="num">${sub[k]}</td>`).join("");
         return `
-          <tr><td colspan="${typeKeys.length + 2}" style="background:var(--surface-2,#f3f4f6);font-weight:700;color:var(--muted)">${esc(region)}</td></tr>
+          <tr><td colspan="${typeKeys.length + 2}" style="background:var(--surface-2,#f3f4f6);font-weight:700;color:var(--muted)">${regionFlag(region)} ${esc(region)}</td></tr>
           ${rows}
           <tr style="border-top:1px solid var(--border,#d7dae0)"><td style="color:var(--muted)">${esc(region)} subtotal</td>${subCells}<td class="num"><b>${subTotal}</b></td></tr>`;
       })
@@ -937,7 +946,6 @@
 
   function renderEntryRow(e) {
     const ae = db.aes.find((a) => a.id === e.aeId);
-    const c = countryByCode(ae ? ae.country : "");
     const lvl = LEVELS[e.level] || { cls: "", short: e.level };
     const tags = [
       e.held ? "Held" : null,
@@ -945,7 +953,6 @@
     ].filter(Boolean).join(" · ");
     return `
       <div class="entry">
-        <span class="flag">${c.flag}</span>
         <div class="main">
           <b>${esc(ae ? ae.name : "Unknown")}</b> <span class="badge ${lvl.cls}">${lvl.short}</span> ${meetingTypeBadge(e)} ${statusBadge(e)} ${sourceBadge(e)}
           <div class="meta">${esc(e.account || "—")}${tags ? " · " + tags : ""}</div>
@@ -1052,7 +1059,7 @@
         ${
           missing.length
             ? `<div class="meta" style="margin-bottom:6px">Missing a calendar email (won't be auto-tracked):</div>
-               <div class="chip-row">${missing.map((a) => `<span class="chip">${countryByCode(a.country).flag} ${esc(a.name)}</span>`).join("")}</div>
+               <div class="chip-row">${missing.map((a) => `<span class="chip">${esc(a.name)}</span>`).join("")}</div>
                <p class="meta" style="margin:10px 0 0">These AEs need a <code>firstname.lastname@cursor.com</code> calendar email mapped in the roster so the sync knows which calendar to read.</p>`
             : `<p class="meta" style="margin:0">✅ Every active AE has a calendar mapped.</p>`
         }
