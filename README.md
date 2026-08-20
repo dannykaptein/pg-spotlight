@@ -1,7 +1,7 @@
-# PG Dashboard — EMEA Pipeline Generation
+# EMEA AE Activity Tracker — EMEA Pipeline Generation
 
 An always-on, dependency-free web dashboard for tracking New Business Meetings (NBMs)
-across the EMEA team. It grew out of the "PG Spotlight" championship and keeps the
+across the EMEA team. It grew out of the "EMEA AE Activity Tracker" championship and keeps the
 Panini-style squad and value-led scoring, but runs continuously with rolling
 week / month / quarter / all-time views — and can track NBMs **automatically from
 the team's Google Calendars**.
@@ -33,7 +33,7 @@ python3 -m http.server 5173
 
 1. Create a Supabase project.
 2. Run [`supabase-schema.sql`](supabase-schema.sql) in the SQL editor (idempotent —
-   safe to run on an existing PG Spotlight database to upgrade it).
+   safe to run on an existing EMEA AE Activity Tracker database to upgrade it).
 3. Copy the Project URL and publishable/anon key into `config.js`.
 4. Redeploy the site.
 

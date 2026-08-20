@@ -442,6 +442,7 @@
     tab: "home",
     weekKey: currentProgramWeekKey(),
     lbScope: "week", // week | month | quarter | all
+    overviewRegion: "all", // "all" (holistic) or a REGIONS value
     modal: null, // { mode:'add'|'edit', ae }
   };
 
@@ -449,7 +450,9 @@
    * Rendering
    * ========================================================== */
   const TABS = [
-    { id: "home", label: "Overview", icon: "📣" },
+    { id: "intro", label: "Start here", icon: "👋" },
+    { id: "home", label: "Home", icon: "📣" },
+    { id: "overview", label: "Overview", icon: "🧭" },
     { id: "leaderboard", label: "Insights", icon: "📈" },
     { id: "roster", label: "Team", icon: "👥" },
     { id: "calendar", label: "Calendar Sync", icon: "🗓️" },
@@ -466,7 +469,7 @@
         ${renderStats()}
         <div id="view">${renderView()}</div>
         <div class="footer-note">
-          PG Dashboard · EMEA Pipeline Generation · shared team data is connected
+          EMEA AE Activity Tracker · EMEA Pipeline Generation · shared team data is connected
         </div>
       </div>
       <div id="toast" class="toast"></div>
@@ -482,7 +485,7 @@
       ? ` <b>${auto}</b> NBM${auto === 1 ? "" : "s"} tracked so far.`
       : "";
     return `
-      <div class="card card-pad" style="margin-bottom:16px;border-color:rgba(46,204,113,0.38);background:rgba(46,204,113,0.08)">
+      <div class="card card-pad" style="margin-bottom:16px;border-color:rgba(79,122,99,0.35);background:rgba(79,122,99,0.07)">
         <b>Automatic tracking is on.</b>
         <span style="color:var(--muted)">New Business Meetings are pulled straight from the team's calendars into one shared, live view — no logging, no approvals.${autoNote}</span>
       </div>`;
@@ -497,7 +500,7 @@
             <div class="crest">📊</div>
             <div>
               <div class="sub">EMEA Pipeline Generation</div>
-              <h1>PG Dashboard</h1>
+              <h1>EMEA AE Activity Tracker</h1>
             </div>
           </div>
           <div class="topbar-spacer"></div>
@@ -543,13 +546,77 @@
 
   function renderView() {
     switch (state.tab) {
+      case "intro": return renderIntro();
       case "home": return renderHome();
+      case "overview": return renderOverview();
       case "leaderboard": return renderInsights();
       case "roster": return renderRoster();
       case "calendar": return renderCalendar();
       case "program": return renderProgram();
       default: return renderHome();
     }
+  }
+
+  /* ---------- Introduction / Start here ---------- */
+  function renderIntro() {
+    const sections = [
+      ["📈", "Insights", "Team-level KPIs and breakdowns — NBM volume, held rate and next steps, sliced by region, seniority and meeting type over week, month, quarter or all-time."],
+      ["👥", "Team", "A profile for every AE showing their NBM activity and held rate, so you can see momentum across all the EMEA teams at a glance."],
+      ["🗓️", "Calendar Sync", "Where the automatic tracking lives — meetings are pulled straight from each AE's calendar, with nothing to log by hand."],
+    ];
+    const meetingTypeCards = Object.keys(MEETING_TYPES)
+      .map((k) => `<span class="badge mt ${MEETING_TYPES[k].cls}">${esc(MEETING_TYPES[k].short)}</span>`)
+      .join(" ");
+    const teams = REGIONS.map((r) => `<span class="chip">${esc(r)}</span>`).join("");
+
+    return `
+      <div class="hero">
+        <div class="ball">👋</div>
+        <div class="eyebrow">EMEA Pipeline Generation</div>
+        <h1>Welcome to the EMEA AE Activity Tracker</h1>
+        <p class="lead">
+          An EMEA-wide Product Group dashboard that automatically tracks New Business Meetings (NBMs)
+          and how they progress — straight from the team's calendars. There's no manual logging and no
+          points or competition: it's simply a shared, live view of the pipeline-generating activity
+          happening across the EMEA teams.
+        </p>
+        <div class="facts">${teams}</div>
+        <div class="cta btn-row">
+          <button class="btn primary" data-tab="leaderboard">Go to Insights</button>
+          <button class="btn" data-tab="roster">Browse the Team</button>
+        </div>
+      </div>
+
+      <div class="section-head"><div><h2>What this is for</h2><p>Insight into pipeline-generating activity — not a scoreboard</p></div></div>
+      <div class="rules-grid">
+        <div class="rule"><div class="ic">🗓️</div><b>Automatic, from calendars</b><p>New Business Meetings are detected from the team's calendars, so the picture stays current without anyone logging a thing.</p></div>
+        <div class="rule"><div class="ic">🌍</div><b>Whole of EMEA</b><p>Covers every team — GEO Enterprise, UKI, Benelux, Central Europe, Southern Europe and Nordics — in one place.</p></div>
+        <div class="rule"><div class="ic">🤝</div><b>Insight, not competition</b><p>No points, no leaderboard prizes. The aim is to understand where pipeline is being created and where it's stalling.</p></div>
+      </div>
+
+      <div class="section-head" style="margin-top:20px"><div><h2>How to use it</h2><p>Three main sections, plus a meeting-type tag on every meeting</p></div></div>
+      <div class="rules-grid">
+        ${sections.map((r) => `<div class="rule"><div class="ic">${r[0]}</div><b>${r[1]}</b><p>${esc(r[2])}</p></div>`).join("")}
+      </div>
+
+      <div class="card card-pad" style="margin-top:16px">
+        <h2 style="font-size:16px;margin-top:0">🏷️ The meeting-type tag</h2>
+        <p style="color:var(--muted);font-size:13.5px;margin:0 0 10px">
+          Meetings are pulled in automatically from calendars, and each one carries a meeting-type tag.
+          You can adjust the tag inline on any meeting if the automatic guess needs a tweak:
+        </p>
+        <div class="chip-row">${meetingTypeCards}</div>
+      </div>
+
+      <div class="card card-pad" style="margin-top:20px">
+        <h2 style="font-size:16px;margin-top:0">🔎 Using it for pipeline review</h2>
+        <ul class="info-list">
+          <li><span class="dot">▸</span><span><b>See NBM volume and held rates</b> at team and AE level, so conversations start from what actually happened.</span></li>
+          <li><span class="dot">▸</span><span><b>Track progression</b> through the <b>VO Progression</b>, <b>Champion Go/No-Go</b> and <b>EB Go/No-Go</b> stages.</span></li>
+          <li><span class="dot">▸</span><span><b>Spot where deals are advancing or stalling</b> — where next steps are being booked and where they aren't.</span></li>
+          <li><span class="dot">▸</span><span><b>Ground the discussion in real activity</b> rather than self-reported numbers, because everything is drawn from calendars.</span></li>
+        </ul>
+      </div>`;
   }
 
   /* ---------- Overview / Home ---------- */
@@ -572,7 +639,7 @@
       <div class="hero">
         <div class="ball">📊</div>
         <div class="eyebrow">EMEA Pipeline Generation</div>
-        <h1>PG Dashboard</h1>
+        <h1>EMEA AE Activity Tracker</h1>
         <p class="lead">
           An always-on view of New Business Meeting progress across EMEA. Meetings are tracked
           automatically from the team's calendars and rolled up into clear insights — by region,
@@ -766,6 +833,159 @@
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  /* ---------- Overview (QTD meetings by type) ---------- */
+  // Fiscal quarters for the QTD Overview. NOTE these are FISCAL, not calendar,
+  // quarters (Q3 is only Aug–Sep), so they intentionally do NOT use periodRange.
+  // Add more entries here to extend beyond FY26.
+  const QUARTERS = [
+    { label: "Q3 2026", start: "2026-08-01", end: "2026-09-30" },
+    { label: "Q4 2026", start: "2026-10-01", end: "2026-12-31" },
+  ];
+  // Resolve the quarter-to-date window from today's real date. QTD runs from the
+  // current quarter's start through the earlier of today or the quarter end. If
+  // today falls outside every configured quarter we fall back to the nearest one
+  // and flag it so the UI can label it clearly.
+  function currentQuarterToDate(today) {
+    const nowISO = toISO(today || new Date());
+    let quarter = QUARTERS.find((q) => nowISO >= q.start && nowISO <= q.end);
+    let note = "";
+    if (!quarter) {
+      if (QUARTERS.length && nowISO < QUARTERS[0].start) {
+        quarter = QUARTERS[0];
+        note = "upcoming quarter — not started yet";
+      } else {
+        quarter = QUARTERS[QUARTERS.length - 1];
+        note = "quarter closed — showing the full period";
+      }
+    }
+    const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+    return { quarter, startISO: quarter.start, endISO: clamp(nowISO, quarter.start, quarter.end), note };
+  }
+  function fmtQtdDate(iso) {
+    return parseDate(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  function renderOverview() {
+    const { quarter, startISO, endISO, note } = currentQuarterToDate();
+    const typeKeys = Object.keys(MEETING_TYPES); // source of truth for columns
+    const blank = () => typeKeys.reduce((o, k) => ((o[k] = 0), o), {});
+
+    // Count each AE's entries dated inside the QTD window, bucketed by type.
+    const counts = new Map();
+    db.aes.forEach((ae) => counts.set(ae.id, blank()));
+    db.entries.forEach((e) => {
+      if (!e || !e.date) return;
+      if (e.date < startISO || e.date > endISO) return;
+      const row = counts.get(e.aeId);
+      if (!row) return;
+      row[meetingType(e)] += 1;
+    });
+
+    // Region filter — "all" is the holistic combined view (default).
+    const allRegions = [
+      ...REGIONS,
+      ...[...new Set(db.aes.map((a) => a.region))].filter((r) => !REGIONS.includes(r)),
+    ];
+    const selected = state.overviewRegion === "all" || allRegions.includes(state.overviewRegion)
+      ? state.overviewRegion
+      : "all";
+    const showAll = selected === "all";
+    const seg = `
+      <div class="seg">
+        <button class="${showAll ? "active" : ""}" data-region-filter="all">All regions</button>
+        ${allRegions.map((r) => `<button class="${selected === r ? "active" : ""}" data-region-filter="${esc(r)}">${esc(r)}</button>`).join("")}
+      </div>`;
+
+    const rangeLabel = `${fmtQtdDate(startISO)} – ${fmtQtdDate(endISO)}`;
+    const scopeText = showAll ? "all EMEA regions" : esc(selected);
+    const header = `
+      <div class="section-head">
+        <div>
+          <h2>Overview</h2>
+          <p>Meetings booked quarter-to-date, by meeting type · <b>${esc(quarter.label)}</b> · ${esc(rangeLabel)} · ${scopeText}${note ? ` · <span class="rg">${esc(note)}</span>` : ""}</p>
+        </div>
+        ${seg}
+      </div>`;
+
+    if (!db.aes.length) {
+      return `${header}<div class="empty"><div class="ico">🧭</div><h3>No AEs yet</h3><p>Add the team to see quarter-to-date meeting activity.</p></div>`;
+    }
+
+    const th = typeKeys.map((k) => `<th class="num">${esc(MEETING_TYPES[k].short)}</th>`).join("");
+    const grand = blank();
+    let grandTotal = 0;
+
+    // Group rows by region (mirrors the region grouping used elsewhere).
+    // When a single region is selected the table is filtered to just that team.
+    const regionOrder = showAll ? allRegions : [selected];
+    const body = regionOrder
+      .map((region) => {
+        const members = db.aes
+          .filter((a) => a.region === region)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        if (!members.length) return "";
+        const sub = blank();
+        let subTotal = 0;
+        const rows = members
+          .map((ae) => {
+            const row = counts.get(ae.id) || blank();
+            const rowTotal = typeKeys.reduce((n, k) => n + row[k], 0);
+            typeKeys.forEach((k) => { sub[k] += row[k]; grand[k] += row[k]; });
+            subTotal += rowTotal;
+            grandTotal += rowTotal;
+            const c = countryByCode(ae.country);
+            const cells = typeKeys.map((k) => `<td class="num">${row[k] || 0}</td>`).join("");
+            return `
+              <tr>
+                <td>
+                  <div class="ae">
+                    <span class="flag">${c.flag}</span>
+                    <span><span class="nm">${esc(ae.name)}</span><br><span class="rg">${esc(ae.region)}${ae.rvp ? " · " + esc(ae.rvp) : ""}</span></span>
+                  </div>
+                </td>
+                ${cells}
+                <td class="num"><b>${rowTotal}</b></td>
+              </tr>`;
+          })
+          .join("");
+        const subCells = typeKeys.map((k) => `<td class="num">${sub[k]}</td>`).join("");
+        return `
+          <tr><td colspan="${typeKeys.length + 2}" style="background:var(--surface-2,#f3f4f6);font-weight:700;color:var(--muted)">${esc(region)}</td></tr>
+          ${rows}
+          <tr style="border-top:1px solid var(--border,#d7dae0)"><td style="color:var(--muted)">${esc(region)} subtotal</td>${subCells}<td class="num"><b>${subTotal}</b></td></tr>`;
+      })
+      .join("");
+
+    const grandCells = typeKeys.map((k) => `<td class="num"><b>${grand[k]}</b></td>`).join("");
+    // Grand total only adds signal in the holistic view; for a single region it
+    // would just duplicate that region's subtotal.
+    const grandRow = showAll
+      ? `<tr style="border-top:2px solid var(--border,#d7dae0)">
+              <td><b>All EMEA</b></td>
+              ${grandCells}
+              <td class="num"><b>${grandTotal}</b></td>
+            </tr>`
+      : "";
+
+    return `
+      ${header}
+      <div class="card">
+        <table class="lb">
+          <thead>
+            <tr>
+              <th>Account Executive</th>
+              ${th}
+              <th class="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${body}
+            ${grandRow}
+          </tbody>
         </table>
       </div>`;
   }
@@ -970,7 +1190,7 @@
           <div class="stat"><div class="k">Auto-tracked total</div><div class="v">${auto.length}</div></div>
         </div>
         ${s.message ? `<p class="meta" style="margin:12px 0 0">${esc(s.message)}</p>` : ""}
-        ${!ready ? `<p class="meta" style="margin:12px 0 0;color:var(--rejected,#c0392b)">⚠️ Supabase isn't configured in <b>config.js</b>, so sync can't run yet.</p>` : ""}
+        ${!ready ? `<p class="meta" style="margin:12px 0 0;color:var(--red,#a85850)">⚠️ Supabase isn't configured in <b>config.js</b>, so sync can't run yet.</p>` : ""}
       </div>`;
 
     const coverageCard = `
@@ -1027,7 +1247,7 @@
   /* ---------- Program / Playbook ---------- */
   function renderProgram() {
     return `
-      <div class="section-head"><div><h2>Playbook</h2><p>How the EMEA PG dashboard works, in one place</p></div></div>
+      <div class="section-head"><div><h2>Playbook</h2><p>How the EMEA AE Activity Tracker works, in one place</p></div></div>
       <div class="two-col">
         <div class="card card-pad">
           <h2 style="font-size:16px;margin-top:0">How it runs</h2>
@@ -1182,6 +1402,12 @@
     const scopeBtn = ev.target.closest("[data-scope]");
     if (scopeBtn) {
       state.lbScope = scopeBtn.getAttribute("data-scope");
+      render();
+      return;
+    }
+    const regionBtn = ev.target.closest("[data-region-filter]");
+    if (regionBtn) {
+      state.overviewRegion = regionBtn.getAttribute("data-region-filter");
       render();
       return;
     }

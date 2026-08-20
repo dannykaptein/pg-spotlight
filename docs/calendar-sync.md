@@ -1,6 +1,6 @@
 # Automatic NBM tracking from Google Calendar
 
-The PG Dashboard can detect New Business Meetings (NBMs) automatically from the
+The EMEA AE Activity Tracker can detect New Business Meetings (NBMs) automatically from the
 team's Google Calendars, so most meetings never need to be logged by hand. A
 scheduled Supabase Edge Function reads each active AE's calendar centrally, finds
 external meetings, infers the seniority level, and writes them into the dashboard
@@ -14,7 +14,7 @@ Google Calendar ──(service account, domain-wide delegation)──▶ calenda
                                                         Supabase  nbm_entries
                                                                      │
                                                                      ▼
-                                                        PG Dashboard insights
+                                                EMEA AE Activity Tracker insights
 ```
 
 The same function can optionally **discover the roster** from the Google Workspace
