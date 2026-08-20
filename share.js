@@ -362,55 +362,75 @@
   // The official campaign roster (name, team, start date). Replaces any demo
   // data and resets standings to zero. Runs once per browser (guarded by a flag);
   // stable IDs make re-runs idempotent (no duplicates).
-  var REAL_ROSTER_FLAG = "pg-real-roster-v3";
-  // [name, team, manager (verifies their NBMs), start date]
+  var REAL_ROSTER_FLAG = "pg-real-roster-v5";
+  // [name, team (region), team lead (RVP), start date, country code, work email]
+  // Mirrors the "AE name for PG App EMEA" sheet: six teams, correct leaders,
+  // and firstname.lastname@cursor.com calendar keys.
   var REAL_ROSTER = [
-    ["Charles Addai-Appiah", "UK", "Jason Creane", "2026-04-20"],
-    ["James Farnhill", "UK", "Jason Creane", "2026-05-11"],
-    ["Lauren Caska", "UK", "Jason Creane", "2026-06-01"],
-    ["Dylan Chambers", "UK", "Jason Creane", "2026-06-01"],
-    ["Ben Harknett", "UK", "Jason Creane", "2026-07-06"],
-    ["Jack Ferrari", "UK", "Jason Creane", "2026-06-08"],
-    ["Karim Chester", "UK", "Jason Creane", "2026-06-01"],
-    ["Michael Hart", "UK", "Jason Creane", "2026-06-08"],
-    ["Mounir Ben Saad", "France", "Benjamin Caller", "2026-04-12"],
-    ["Julien Le Postec", "France", "Benjamin Caller", "2026-05-18"],
-    ["Daniel Campo", "France", "Benjamin Caller", "2026-05-25"],
-    ["Aurelien Aissa", "France", "Benjamin Caller", "2026-06-15"],
-    ["Robert Glowacz", "Germany", "Timo Trunk", "2026-05-04"],
-    ["Vincent Le Magoariec", "Switzerland", "Timo Trunk", "2026-06-01"],
-    ["Sven Ehlhardt", "Germany", "Timo Trunk", "2026-07-01"],
-    ["Tobias Tritscher", "Germany", "Timo Trunk", "2026-08-05"],
-    ["Joerg Kassner", "Germany", "Timo Trunk", "2026-08-19"],
-    ["Gino Mommers", "Netherlands", "Danny Kaptein", "2026-05-11"],
-    ["Jeffrey de Roo", "Netherlands", "Danny Kaptein", "2026-06-01"],
-    ["Joren de Graaf", "Netherlands", "Danny Kaptein", "2026-06-29"],
-    ["Achraf Artimi", "Netherlands", "Danny Kaptein", "2026-07-06"],
-    ["Sjors Bonjer", "Netherlands", "Danny Kaptein", "2026-06-29"],
-    ["Mats Millnert", "Sweden", "Sia Y", "2026-05-04"],
-    ["Jonathan Falk Sundman", "Sweden", "Sia Y", "2026-06-29"],
-    ["Erik Rasmussen", "Sweden", "Sia Y", "2026-06-29"],
-    ["Elias Almqvist", "Sweden", "Sia Y", "2026-08-03"],
-    ["Sevinc Celebi", "Germany", "Kathrin Redlich", "2026-06-01"],
-    ["Marcquero Ermoza", "France", "Kathrin Redlich", ""],
-    ["Nicolas Chahoud", "France", "Kathrin Redlich", "2026-01-08"],
-    ["Yvonne Kyri", "Germany", "Kathrin Redlich", "2026-07-01"],
-    ["Pierre Phelippeau", "France", "Kathrin Redlich", ""],
-    ["Pieter D'Hondt", "Netherlands", "Kathrin Redlich", "2026-07-01"],
-    ["Alyssa Murre", "UK", "Kathrin Redlich", "2026-07-01"],
-    ["Tom Gudgeon", "UK", "Kathrin Redlich", "2026-09-01"],
+    ["Alyssa Murre", "GEO Enterprise", "Kathrin Redlich", "2026-07-01", "GB", "alyssa.murre@cursor.com"],
+    ["Tom Gudgeon", "GEO Enterprise", "Kathrin Redlich", "2026-09-01", "GB", "tom.gudgeon@cursor.com"],
+    ["Sid Power", "GEO Enterprise", "Kathrin Redlich", "", "GB", "sid.power@cursor.com"],
+    ["Robert Eyre", "GEO Enterprise", "Kathrin Redlich", "", "GB", "robert.eyre@cursor.com"],
+    ["Ludovica Peracino", "GEO Enterprise", "Kathrin Redlich", "", "IT", "ludovica.peracino@cursor.com"],
+    ["Mackeznie Drysdale", "GEO Enterprise", "Kathrin Redlich", "", "GB", "mackeznie.drysdale@cursor.com"],
+    ["Sevinc Celebi", "GEO Enterprise", "Kathrin Redlich", "2026-06-01", "DE", "sevinc.celebi@cursor.com"],
+    ["Yvonne Kyri", "GEO Enterprise", "Kathrin Redlich", "2026-07-01", "GB", "yvonne.kyri@cursor.com"],
+    ["Nicolas Chahoud", "GEO Enterprise", "Kathrin Redlich", "2026-01-08", "DE", "nicolas.chahoud@cursor.com"],
+    ["Marcquero Ermoza", "GEO Enterprise", "Kathrin Redlich", "", "ES", "marcquero.ermoza@cursor.com"],
+    ["Pierre Phelippeau", "GEO Enterprise", "Kathrin Redlich", "", "FR", "pierre.phelippeau@cursor.com"],
+    ["James Farnhill", "UKI", "Jacob Anderson", "2026-05-11", "GB", "james.farnhill@cursor.com"],
+    ["Lauren Caska", "UKI", "Jacob Anderson", "2026-06-01", "GB", "lauren.caska@cursor.com"],
+    ["Dylan Chambers", "UKI", "Jacob Anderson", "2026-06-01", "GB", "dylan.chambers@cursor.com"],
+    ["Jack Ferrari", "UKI", "Jacob Anderson", "2026-06-08", "GB", "jack.ferrari@cursor.com"],
+    ["Ivo Hayes", "UKI", "Jacob Anderson", "", "GB", "ivo.hayes@cursor.com"],
+    ["Ben Beaumont", "UKI", "Jacob Anderson", "", "GB", "ben.beaumont@cursor.com"],
+    ["Charles Addai-Appiah", "UKI", "Jason Creane", "2026-04-20", "GB", "charles.appiah@cursor.com"],
+    ["Danielle Broeze", "UKI", "Jason Creane", "", "GB", "danielle.broeze@cursor.com"],
+    ["James Daniel", "UKI", "Jason Creane", "", "GB", "james.daniel@cursor.com"],
+    ["Ramya Gopalakrishnan", "UKI", "Jason Creane", "", "GB", "ramya.gopalakrishnan@cursor.com"],
+    ["Sam Hesketh", "UKI", "Jason Creane", "", "GB", "sam.hesketh@cursor.com"],
+    ["Karim Chester", "UKI", "Jason Creane", "2026-06-01", "GB", "karim.chester@cursor.com"],
+    ["Michael Hart", "UKI", "Jason Creane", "2026-06-08", "GB", "michael.hart@cursor.com"],
+    ["Ben Harknett", "UKI", "Jason Creane", "2026-07-06", "GB", "ben.harknett@cursor.com"],
+    ["Jeffrey de Roo", "Benelux", "Danny Kaptein", "2026-06-01", "NL", "jeffrey.deroo@cursor.com"],
+    ["Joren de Graaf", "Benelux", "Danny Kaptein", "2026-06-29", "NL", "joren.degraaf@cursor.com"],
+    ["Sjors Bonjer", "Benelux", "Danny Kaptein", "2026-06-29", "NL", "sjors.bonjer@cursor.com"],
+    ["Gino Mommers", "Benelux", "Danny Kaptein", "2026-05-11", "NL", "gino.mommers@cursor.com"],
+    ["Pieter D`Hondt", "Benelux", "Danny Kaptein", "2026-07-01", "BE", "pieter.dhondt@cursor.com"],
+    ["Lotte Koop", "Benelux", "Danny Kaptein", "", "NL", "lotte.koop@cursor.com"],
+    ["Enrico Antonacci", "Benelux", "Danny Kaptein", "", "NL", "enrico.antonacci@cursor.com"],
+    ["Achraf Artimi", "Benelux", "Danny Kaptein", "2026-07-06", "NL", "achraf.artimi@cursor.com"],
+    ["Vincent Le Magoariec", "Central Europe", "Timo Trunk", "2026-06-01", "FR", "vincent.lemagoariec@cursor.com"],
+    ["Sven Ehlhardt", "Central Europe", "Timo Trunk", "2026-07-01", "DE", "sven.ehlhardt@cursor.com"],
+    ["Tobias Tritscher", "Central Europe", "Timo Trunk", "2026-08-05", "DE", "tobias.tritscher@cursor.com"],
+    ["Matthias Goellner", "Central Europe", "Timo Trunk", "", "DE", "matthias.goellner@cursor.com"],
+    ["Kevin Switala", "Central Europe", "Timo Trunk", "", "DE", "kevin.switala@cursor.com"],
+    ["Robert Glowacz", "Central Europe", "Timo Trunk", "2026-05-04", "PL", "robert.glowacz@cursor.com"],
+    ["Joerg Kassner", "Central Europe", "Timo Trunk", "2026-08-19", "DE", "joerg.kassner@cursor.com"],
+    ["Daniel Campo", "Southern Europe", "Ben Caller", "2026-05-25", "ES", "daniel.campo@cursor.com"],
+    ["Aurelien Aissa", "Southern Europe", "Ben Caller", "2026-06-15", "FR", "aurelien.aissa@cursor.com"],
+    ["Alexandre Paradelo", "Southern Europe", "Ben Caller", "", "ES", "alexandre.paradelo@cursor.com"],
+    ["Mounir Ben Saad", "Southern Europe", "Ben Caller", "2026-04-12", "FR", "mounir.bensaad@cursor.com"],
+    ["Julien Le Postec", "Southern Europe", "Ben Caller", "2026-05-18", "FR", "julien.lepostec@cursor.com"],
+    ["Elias Almqvist", "Nordics", "Sia Yaghoubi", "2026-08-03", "SE", "elias.almqvist@cursor.com"],
+    ["Eric Bodi Salén", "Nordics", "Sia Yaghoubi", "", "SE", "eric.salen@cursor.com"],
+    ["Ian Smith", "Nordics", "Sia Yaghoubi", "", "SE", "ian.smith@cursor.com"],
+    ["Camilla Kiernan", "Nordics", "Sia Yaghoubi", "", "SE", "camilla.kiernan@cursor.com"],
+    ["Erik Ekedahl", "Nordics", "Sia Yaghoubi", "", "SE", "erik.ekedahl@cursor.com"],
+    ["Mats Millnert", "Nordics", "Sia Yaghoubi", "2026-05-04", "SE", "mats.millnert@cursor.com"],
+    ["Jonathan Falk Sundman", "Nordics", "Sia Yaghoubi", "2026-06-29", "SE", "jonathan.falk.sundman@cursor.com"],
+    ["Erik Rasmussen", "Nordics", "Sia Yaghoubi", "2026-06-29", "DK", "erik.rasmussen@cursor.com"],
   ];
-  function teamToCountryCode(team) {
-    var map = { uk: "GB", "united kingdom": "GB", france: "FR", germany: "DE", switzerland: "CH", netherlands: "NL", sweden: "SE" };
-    var t = String(team || "").trim().toLowerCase();
-    return map[t] || String(team || "GB").trim().toUpperCase() || "GB";
-  }
   function slug(name) {
     return "ae-" + String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   }
   function buildRealRoster() {
     return REAL_ROSTER.map(function (row) {
-      return { id: slug(row[0]), name: row[0], country: teamToCountryCode(row[1]), region: row[1], rvp: row[2] || "", startDate: row[3] || "", photoUrl: "" };
+      return {
+        id: slug(row[0]), name: row[0], region: row[1], rvp: row[2] || "",
+        startDate: row[3] || "", country: (row[4] || "GB").toUpperCase(),
+        calendarEmail: row[5] || "", photoUrl: "", active: true,
+      };
     });
   }
   // One-time per-browser roster seed: the real roster becomes the local source
