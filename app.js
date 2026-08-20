@@ -33,15 +33,16 @@
     Engineer: { cls: "eng", short: "Engineer" },
   };
 
-  // Meeting type -> label + colour class. Every entry carries one; "NBM" is the
-  // default. Users can change it inline on each entry row.
+  // Meeting type -> label + colour class. Every external meeting is recorded as
+  // neutral "Activity" until an AE tags it. Users can change it inline on each row.
   const MEETING_TYPES = {
+    Activity: { cls: "mtg", short: "Activity" },
     NBM: { cls: "nbm", short: "NBM" },
     "VO Progression": { cls: "vo", short: "VO progression" },
     "Champion Go/No-Go": { cls: "champ", short: "Champion go/no-go" },
     "EB Go/No-Go": { cls: "eb", short: "EB go/no-go" },
   };
-  const DEFAULT_MEETING_TYPE = "NBM";
+  const DEFAULT_MEETING_TYPE = "Activity";
   function meetingType(e) {
     return MEETING_TYPES[e && e.meetingType] ? e.meetingType : DEFAULT_MEETING_TYPE;
   }
@@ -229,7 +230,7 @@
             status: migrateStatus(e.status),
             verifiedBy: e.verifiedBy || "",
             verifiedAt: e.verifiedAt || "",
-            // Entries predating meeting types default to NBM.
+            // Entries predating meeting types fall back to the neutral default.
             meetingType: MEETING_TYPES[e.meetingType] ? e.meetingType : DEFAULT_MEETING_TYPE,
           })),
           jerseys: parsed.jerseys || {},
@@ -364,7 +365,7 @@
         // most done — to demo every stage of the leader workflow.
         const status = r === 0 || r === 7 ? "booked" : r === 2 || r === 5 ? "confirmed" : "done";
         const counted = status !== "booked";
-        // Mostly NBMs, with a deterministic sprinkle of other types for demo.
+        // Mostly untagged Activity, with a deterministic sprinkle of tagged types for demo.
         const mtKeys = Object.keys(MEETING_TYPES);
         const meetingType = r >= 8 ? mtKeys[1 + ((i + j) % (mtKeys.length - 1))] : DEFAULT_MEETING_TYPE;
         entries.push({
@@ -446,6 +447,9 @@
     weekKey: currentProgramWeekKey(),
     lbScope: "week", // week | month | quarter | all
     overviewRegion: "all", // "all" (holistic) or a REGIONS value
+    activityAe: null, // selected AE id on the Activity tab
+    activityType: "all", // "all" or a MEETING_TYPES key
+    activityHeld: "all", // all | held | upcoming
     modal: null, // { mode:'add'|'edit', ae }
   };
 
@@ -456,6 +460,7 @@
     { id: "intro", label: "How to use the tracker", icon: "👋" },
     { id: "overview", label: "Overview", icon: "🧭" },
     { id: "leaderboard", label: "Insights", icon: "📈" },
+    { id: "activity", label: "Activity", icon: "🏷️" },
     { id: "calendar", label: "Calendar Sync", icon: "🗓️" },
   ];
 
@@ -540,6 +545,7 @@
       case "intro": return renderIntro();
       case "overview": return renderOverview();
       case "leaderboard": return renderInsights();
+      case "activity": return renderActivity();
       case "calendar": return renderCalendar();
       default: return renderIntro();
     }
@@ -591,9 +597,9 @@
       <div class="card card-pad" style="margin-top:16px">
         <h2 style="font-size:16px;margin-top:0">🏷️ The meeting-type tag</h2>
         <p style="color:var(--muted);font-size:13.5px;margin:0 0 10px">
-          Every meeting pulled from a calendar is counted as activity and starts tagged as an <b>NBM</b>
-          by default. It's each AE's job to adjust the meeting type inline so it reflects what the meeting
-          actually was:
+          Every external meeting pulled from a calendar is recorded as generic <b>Activity</b> — it is
+          not assumed to be an NBM. It's each AE's job to tag the meeting type inline (NBM, VO
+          progression, Champion go/no-go or EB go/no-go) so it reflects what the meeting actually was:
         </p>
         <div class="chip-row">${meetingTypeCards}</div>
       </div>
@@ -860,8 +866,8 @@
                     <span><span class="nm">${esc(ae.name)}</span><br><span class="rg">${esc(ae.region)}${ae.rvp ? " · " + esc(ae.rvp) : ""}</span></span>
                   </div>
                 </td>
+                <td class="num"><button class="cell-link" data-tab="activity" data-ae="${esc(ae.id)}" title="View all meetings for ${esc(ae.name)} and tag them">${rowTotal}</button></td>
                 ${cells}
-                <td class="num"><b>${rowTotal}</b></td>
               </tr>`;
           })
           .join("");
@@ -869,7 +875,7 @@
         return `
           <tr><td colspan="${typeKeys.length + 2}" style="background:var(--surface-2,#f3f4f6);font-weight:700;color:var(--muted)">${regionFlag(region)} ${esc(region)}</td></tr>
           ${rows}
-          <tr style="border-top:1px solid var(--border,#d7dae0)"><td style="color:var(--muted)">${esc(region)} subtotal</td>${subCells}<td class="num"><b>${subTotal}</b></td></tr>`;
+          <tr style="border-top:1px solid var(--border,#d7dae0)"><td style="color:var(--muted)">${esc(region)} subtotal</td><td class="num"><b>${subTotal}</b></td>${subCells}</tr>`;
       })
       .join("");
 
@@ -879,8 +885,8 @@
     const grandRow = showAll
       ? `<tr style="border-top:2px solid var(--border,#d7dae0)">
               <td><b>All EMEA</b></td>
-              ${grandCells}
               <td class="num"><b>${grandTotal}</b></td>
+              ${grandCells}
             </tr>`
       : "";
 
@@ -891,8 +897,8 @@
           <thead>
             <tr>
               <th>Account Executive</th>
+              <th class="num">Total external meetings</th>
               ${th}
-              <th class="num">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -952,6 +958,91 @@
         </div>
         <div class="acts">${meetingTypeControl(e)}</div>
       </div>`;
+  }
+
+  /* ---------- Activity (full per-AE meeting list) ---------- */
+  function renderActivity() {
+    const aes = db.aes
+      .filter((a) => a.active !== false)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const head = (picker) => `
+      <div class="section-head">
+        <div>
+          <h2>Activity</h2>
+          <p>Every meeting for an AE since 1 Aug — tag each one with its meeting type</p>
+        </div>
+        ${picker}
+      </div>`;
+
+    if (!aes.length) {
+      return `${head("")}<div class="empty"><div class="ico">🏷️</div><h3>No AEs yet</h3><p>Add the team to view per-AE activity.</p></div>`;
+    }
+
+    // Resolve the persisted AE selection, defaulting to the first AE.
+    let selected = aes.find((a) => a.id === state.activityAe);
+    if (!selected) {
+      selected = aes[0];
+      state.activityAe = selected.id;
+    }
+    const aeOpts = aes
+      .map((a) => `<option value="${esc(a.id)}" ${a.id === selected.id ? "selected" : ""}>${esc(a.name)}${a.region ? " · " + esc(a.region) : ""}</option>`)
+      .join("");
+    const picker = `
+      <div class="field activity-picker">
+        <label>Account Executive</label>
+        <select data-action="set-activity-ae">${aeOpts}</select>
+      </div>`;
+
+    // All of the AE's activity within the reporting window, most-recent first.
+    const all = db.entries
+      .filter((e) => e.aeId === selected.id && withinReporting(e))
+      .sort((a, b) => (entryDateISO(a) < entryDateISO(b) ? 1 : -1));
+
+    const typeKeys = Object.keys(MEETING_TYPES);
+    const typeFilter = typeKeys.includes(state.activityType) ? state.activityType : "all";
+    const heldFilter = state.activityHeld === "held" || state.activityHeld === "upcoming" ? state.activityHeld : "all";
+
+    let filtered = all;
+    if (typeFilter !== "all") filtered = filtered.filter((e) => meetingType(e) === typeFilter);
+    if (heldFilter === "held") filtered = filtered.filter((e) => e.held);
+    else if (heldFilter === "upcoming") filtered = filtered.filter((e) => !e.held);
+
+    // KPIs cover the whole reporting window for the AE (unaffected by filters).
+    const total = all.length;
+    const nbm = all.filter((e) => meetingType(e) === "NBM").length;
+    const held = all.filter((e) => e.held).length;
+    const heldRate = total ? Math.round((held / total) * 100) : 0;
+    const kpis = `
+      <div class="stat-strip">
+        <div class="stat"><div class="k">Total activity</div><div class="v">${total}</div></div>
+        <div class="stat"><div class="k">NBMs</div><div class="v">${nbm}</div></div>
+        <div class="stat"><div class="k">Held</div><div class="v">${held} <small>· ${heldRate}%</small></div></div>
+        <div class="stat"><div class="k">Upcoming</div><div class="v">${total - held}</div></div>
+      </div>`;
+
+    const typeChips = [["all", "All"], ...typeKeys.map((k) => [k, MEETING_TYPES[k].short])]
+      .map(([k, label]) => {
+        const n = k === "all" ? all.length : all.filter((e) => meetingType(e) === k).length;
+        return `<button class="chip filter-chip ${typeFilter === k ? "active" : ""}" data-activity-type="${esc(k)}">${esc(label)} <b>${n}</b></button>`;
+      })
+      .join("");
+    const heldChips = [["all", "All"], ["held", "Held"], ["upcoming", "Upcoming"]]
+      .map(([k, label]) => `<button class="${heldFilter === k ? "active" : ""}" data-activity-held="${esc(k)}">${esc(label)}</button>`)
+      .join("");
+
+    const list = filtered.length
+      ? filtered.map(renderEntryRow).join("")
+      : `<div class="empty"><div class="ico">🏷️</div><h3>No meetings match</h3><p>${all.length ? "Try clearing the filters above." : "No activity tracked for this AE yet since 1 Aug."}</p></div>`;
+
+    return `
+      ${head(picker)}
+      ${kpis}
+      <div class="activity-filters">
+        <div class="chip-row">${typeChips}</div>
+        <div class="seg">${heldChips}</div>
+      </div>
+      <div class="card" style="margin-top:16px">${list}</div>`;
   }
 
   /* ---------- Calendar Sync ---------- */
@@ -1063,7 +1154,7 @@
         <div class="section-head" style="padding:14px 16px 0;margin:0">
           <div><h2 style="font-size:15px">Recently auto-tracked</h2>
           <p style="margin:2px 0 0">Counted automatically — no approval needed</p></div>
-          ${recent.length ? `<button class="btn sm" data-tab="leaderboard">View insights</button>` : ""}
+          ${recent.length ? `<div class="btn-row"><button class="btn sm" data-tab="activity">View all in Activity</button><button class="btn sm" data-tab="leaderboard">View insights</button></div>` : ""}
         </div>
         <div style="padding:6px 4px 8px">
           ${
@@ -1087,7 +1178,7 @@
             <li><span class="dot">▸</span><span>Scans each AE's calendar for meetings with <b>external attendees</b> (outside your company domain).</span></li>
             <li><span class="dot">▸</span><span>Infers the <b>NBM level</b> (VP/CTO, Director, Engineer) from the attendee's job title in the directory.</span></li>
             <li><span class="dot">▸</span><span>Marks a meeting <b>Held</b> when it's in the past and was accepted; detects a booked <b>next step</b> from follow-up events.</span></li>
-            <li><span class="dot">▸</span><span>Each meeting is <b>counted as activity</b> (deduped by event id) and defaults to <b>NBM</b> — it's the AE's job to set the correct meeting type. No approval, no scoring.</span></li>
+            <li><span class="dot">▸</span><span>Each external meeting is recorded as <b>Activity</b> (deduped by event id) — it's the AE's job to tag it as NBM, VO progression, Champion go/no-go or EB go/no-go. No approval, no scoring.</span></li>
             <li><span class="dot">▸</span><span>Optionally <b>auto-detects the roster</b> from a shared Google Sheet (one tab per team) or the Directory, adding AEs and whole teams as people start.</span></li>
           </ul>
           <p class="meta" style="margin:10px 0 0">Full setup — Google service account, domain-wide delegation, roster discovery and scheduling — is in <code>docs/calendar-sync.md</code>.</p>
@@ -1190,6 +1281,9 @@
       save();
       render();
       toast(`Meeting type set to ${MEETING_TYPES[val].short}`);
+    } else if (action === "set-activity-ae") {
+      state.activityAe = el.value;
+      render();
     }
   }
 
@@ -1197,6 +1291,8 @@
     const tabBtn = ev.target.closest("[data-tab]");
     if (tabBtn) {
       state.tab = tabBtn.getAttribute("data-tab");
+      const preAe = tabBtn.getAttribute("data-ae");
+      if (preAe) state.activityAe = preAe;
       render();
       // Refresh the calendar sync status from the backend when opening the tab.
       if (state.tab === "calendar") fetchCalendarSyncState().then(() => { if (state.tab === "calendar") render(); });
@@ -1211,6 +1307,18 @@
     const regionBtn = ev.target.closest("[data-region-filter]");
     if (regionBtn) {
       state.overviewRegion = regionBtn.getAttribute("data-region-filter");
+      render();
+      return;
+    }
+    const activityTypeBtn = ev.target.closest("[data-activity-type]");
+    if (activityTypeBtn) {
+      state.activityType = activityTypeBtn.getAttribute("data-activity-type");
+      render();
+      return;
+    }
+    const activityHeldBtn = ev.target.closest("[data-activity-held]");
+    if (activityHeldBtn) {
+      state.activityHeld = activityHeldBtn.getAttribute("data-activity-held");
       render();
       return;
     }

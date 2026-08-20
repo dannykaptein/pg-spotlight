@@ -37,16 +37,57 @@ For each kept meeting it derives:
 - **Account** from the external attendee's email domain.
 - **Held** — true when the meeting is in the past and was accepted.
 - **Next step** — true when a later external meeting exists with the same company.
-- **Meeting type** — a tag describing the meeting's stage. Every entry defaults to
-  `NBM`; the sync will instead pick `VO Progression`, `Champion Go/No-Go` or
-  `EB Go/No-Go` when those are clearly named in the event title/description. Anyone
-  can change the type inline on an entry row in the dashboard, and a manually set
-  type is preserved on the next sync.
+- **Meeting type** — a tag describing the meeting's stage. An external meeting is
+  just an external meeting: it's recorded as the neutral `Activity` type and is
+  **not** assumed to be an NBM. It's the AE's job to tag it (`NBM`, `VO Progression`,
+  `Champion Go/No-Go` or `EB Go/No-Go`) inline on the entry row. A manually set type
+  is preserved on the next sync.
 
 Each meeting maps to exactly one NBM, deduplicated by the Google event id, so the
 job is safe to run as often as you like.
 
-## 1. Create a Google service account with domain-wide delegation
+## 1. Authenticate to Google (pick one)
+
+There are two ways for the sync to read calendars centrally. **Option A needs no
+super-admin** and is preferred when colleagues can already see each other's event
+details inside your Workspace.
+
+### Option A — central account + OAuth (no super-admin, recommended)
+
+One ordinary account (e.g. `emea-activity@cursor.com`, or your own) authorizes once,
+and its token reads every calendar that's internally visible to it. Nobody else
+connects anything.
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/) create (or pick)
+   a project and enable the **Google Calendar API** and **Google Sheets API**.
+2. **APIs & Services → OAuth consent screen.** Set the user type to **Internal**
+   (so only your Workspace can use it — no Google verification needed).
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID →
+   Web application.** Add `https://developers.google.com/oauthplayground` as an
+   authorized redirect URI. Save the **Client ID** and **Client secret**.
+4. Get a **refresh token** for the central account:
+   - Open the [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/),
+     click the gear (⚙) → **Use your own OAuth credentials**, and paste the client
+     id/secret.
+   - In "Step 1", enter these scopes and click **Authorize APIs**, signing in as the
+     **central account**:
+     ```
+     https://www.googleapis.com/auth/calendar.readonly
+     https://www.googleapis.com/auth/spreadsheets.readonly
+     ```
+   - In "Step 2", click **Exchange authorization code for tokens** and copy the
+     **Refresh token**.
+5. Share the roster Google Sheet with the central account as **Viewer**.
+
+That's all — no admin console, no domain-wide delegation. You'll set
+`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and
+`GOOGLE_OAUTH_REFRESH_TOKEN` in the next step.
+
+> If your Workspace's API controls block the internal app, a regular Workspace
+> admin (not a super-admin) can allowlist that one OAuth client. Calendars an
+> individual has hidden from colleagues are simply skipped.
+
+### Option B — service account + domain-wide delegation (needs a super-admin)
 
 You need Google Workspace **super-admin** access once.
 
@@ -77,7 +118,20 @@ supabase login
 supabase link --project-ref YOUR_PROJECT_REF
 ```
 
-Set the secrets (the private key must keep its newlines — `\n` escaped is fine):
+Set the secrets for the auth option you chose in step 1.
+
+**Option A — central account (no super-admin):**
+
+```bash
+supabase secrets set \
+  GOOGLE_OAUTH_CLIENT_ID="....apps.googleusercontent.com" \
+  GOOGLE_OAUTH_CLIENT_SECRET="GOCSPX-..." \
+  GOOGLE_OAUTH_REFRESH_TOKEN="1//0g...refresh-token" \
+  COMPANY_DOMAINS="cursor.com" \
+  ROSTER_SHEET_ID="1LmLg-Pnep8SaXcziPVVPjcqrke_WfluBrmLjs2mSEf4"
+```
+
+**Option B — service account (the private key must keep its newlines — `\n` escaped is fine):**
 
 ```bash
 supabase secrets set \
@@ -87,8 +141,8 @@ supabase secrets set \
   DEFAULT_NBM_LEVEL="Director/Head of"
 ```
 
-Auto-tracked NBMs are always counted the moment they're detected — there is no
-approval step and no scoring.
+Auto-tracked meetings are always counted as activity the moment they're detected —
+there is no approval step and no scoring.
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
 
@@ -187,8 +241,11 @@ The Sheet source takes precedence when both are configured.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GOOGLE_SA_CLIENT_EMAIL` | — | Service account email |
-| `GOOGLE_SA_PRIVATE_KEY` | — | Service account private key (PEM) |
+| `GOOGLE_OAUTH_CLIENT_ID` | — | Central-account OAuth client id (Option A) |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | — | Central-account OAuth client secret (Option A) |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | — | Refresh token for the central account (Option A) |
+| `GOOGLE_SA_CLIENT_EMAIL` | — | Service account email (Option B) |
+| `GOOGLE_SA_PRIVATE_KEY` | — | Service account private key (PEM) (Option B) |
 | `COMPANY_DOMAINS` | — | Comma-separated internal domains; attendees on these are "internal" |
 | `SYNC_WINDOW_PAST_DAYS` | `28` | How far back to scan |
 | `SYNC_WINDOW_FUTURE_DAYS` | `7` | How far forward to scan |
