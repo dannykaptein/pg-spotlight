@@ -534,6 +534,7 @@ textarea { resize: vertical; min-height: 64px; }
 .badge.auto { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-soft); }
 
 /* meeting-type tag pills */
+.badge.mt.mtg   { color: var(--muted); border-color: var(--border-strong); background: var(--surface-2); }
 .badge.mt.nbm   { color: var(--green); border-color: rgba(15,122,90,0.3); background: var(--green-soft); }
 .badge.mt.vo    { color: #2563eb; border-color: rgba(37,99,235,0.3); background: rgba(37,99,235,0.09); }
 .badge.mt.champ { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-soft); }
@@ -546,6 +547,7 @@ textarea { resize: vertical; min-height: 64px; }
   cursor: pointer; max-width: 160px; transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .mt-select:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.mt-select.mtg   { color: var(--muted); }
 .mt-select.nbm   { color: var(--green); }
 .mt-select.vo    { color: #2563eb; }
 .mt-select.champ { color: var(--accent-ink); }
@@ -575,6 +577,29 @@ textarea { resize: vertical; min-height: 64px; }
 }
 .chip b { color: var(--text); }
 .chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- Activity tab ---------- */
+.activity-picker { min-width: 240px; }
+.activity-filters {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 16px;
+}
+.chip.filter-chip { cursor: pointer; background: var(--surface); transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease; }
+.chip.filter-chip:hover { border-color: var(--muted-2); color: var(--text); }
+.chip.filter-chip.active {
+  background: var(--accent-soft); border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+.chip.filter-chip.active b { color: var(--accent-ink); }
+
+/* clickable numeric cell (Overview total -> Activity) */
+.cell-link {
+  border: none; background: transparent; cursor: pointer;
+  font: inherit; font-weight: 800; color: var(--accent);
+  padding: 2px 4px; border-radius: 6px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.cell-link:hover { background: var(--accent-soft); color: var(--accent-ink); text-decoration: underline; }
 
 /* ---------- Entries list ---------- */
 .entry {

@@ -1,9 +1,15 @@
 // EMEA AE Activity Tracker — calendar-sync edge function (Supabase / Deno).
 //
-// Reads each active AE's Google Calendar (centrally, via a Google Workspace
-// service account with domain-wide delegation), detects external New Business
-// Meetings, and upserts them into the `nbm_entries` table as source='calendar'.
-// The upsert is keyed on calendar_event_id, so re-running never duplicates NBMs.
+// Reads each active AE's Google Calendar centrally, detects external meetings,
+// and upserts them into the `nbm_entries` table as source='calendar'. The upsert
+// is keyed on calendar_event_id, so re-running never duplicates a meeting.
+//
+// Two ways to authenticate to Google (pick one):
+//   A) Central-account OAuth (NO super-admin) — one ordinary account grants
+//      consent once; its token reads every calendar that's internally visible.
+//      Set GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN.
+//   B) Service account + domain-wide delegation (needs a Workspace super-admin).
+//      Set GOOGLE_SA_CLIENT_EMAIL / GOOGLE_SA_PRIVATE_KEY.
 //
 // Trigger it on a schedule (see docs/calendar-sync.md) or on demand from the
 // dashboard's "Calendar Sync → Run sync now" button.
@@ -11,12 +17,20 @@
 // Required environment variables (set with `supabase secrets set`):
 //   SUPABASE_URL                  - your project URL (injected automatically)
 //   SUPABASE_SERVICE_ROLE_KEY     - service-role key (injected automatically)
+//   COMPANY_DOMAINS               - extra internal domains (cursor.com, anysphere.co,
+//                                   x.ai are always internal by default)
+// Auth option A — central-account OAuth (no super-admin):
+//   GOOGLE_OAUTH_CLIENT_ID        - OAuth client id (Google Cloud, Web app)
+//   GOOGLE_OAUTH_CLIENT_SECRET    - OAuth client secret
+//   GOOGLE_OAUTH_REFRESH_TOKEN    - refresh token for the central account
+//                                   (scopes: calendar.readonly + spreadsheets.readonly)
+// Auth option B — service account + domain-wide delegation:
 //   GOOGLE_SA_CLIENT_EMAIL        - service account client email
 //   GOOGLE_SA_PRIVATE_KEY         - service account private key (PEM, \n escaped)
-//   COMPANY_DOMAINS               - comma-separated internal domains (e.g. "cursor.com")
 // Optional (calendar scan):
 //   SYNC_WINDOW_PAST_DAYS         - how far back to scan (default 28)
 //   SYNC_WINDOW_FUTURE_DAYS       - how far forward to scan (default 7)
+//   REPORTING_START              - never import before this (default 2026-08-01)
 //   DEFAULT_NBM_LEVEL             - fallback level (default "Director/Head of")
 // Optional (automatic roster from a shared Google Sheet — the simplest option):
 //   ROSTER_SHEET_ID               - spreadsheet id (share the sheet with the service
@@ -49,10 +63,29 @@ const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const SA_EMAIL = Deno.env.get("GOOGLE_SA_CLIENT_EMAIL") || "";
 const SA_KEY = (Deno.env.get("GOOGLE_SA_PRIVATE_KEY") || "").replace(/\\n/g, "\n");
-const COMPANY_DOMAINS = (Deno.env.get("COMPANY_DOMAINS") || "")
-  .split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
+// Central-account OAuth (no super-admin / no domain-wide delegation): one ordinary
+// account grants consent once and we read every internally-visible calendar with
+// its token. Preferred when colleagues can already see each other's event details.
+const OAUTH_CLIENT_ID = Deno.env.get("GOOGLE_OAUTH_CLIENT_ID") || "";
+const OAUTH_CLIENT_SECRET = Deno.env.get("GOOGLE_OAUTH_CLIENT_SECRET") || "";
+const OAUTH_REFRESH_TOKEN = Deno.env.get("GOOGLE_OAUTH_REFRESH_TOKEN") || "";
+const OAUTH_ENABLED = !!(OAUTH_CLIENT_ID && OAUTH_CLIENT_SECRET && OAUTH_REFRESH_TOKEN);
+// Anyone on a company domain is internal, so a meeting with only these attendees
+// is NOT an external meeting. Defaults cover all our domains; COMPANY_DOMAINS can
+// extend them. cursor.com, anysphere.co and x.ai are always treated as internal.
+const DEFAULT_COMPANY_DOMAINS = ["cursor.com", "anysphere.co", "x.ai"];
+const COMPANY_DOMAINS = Array.from(
+  new Set([
+    ...DEFAULT_COMPANY_DOMAINS,
+    ...(Deno.env.get("COMPANY_DOMAINS") || "")
+      .split(",").map((d) => d.trim().toLowerCase()).filter(Boolean),
+  ]),
+);
 const PAST_DAYS = Number(Deno.env.get("SYNC_WINDOW_PAST_DAYS") || "28");
 const FUTURE_DAYS = Number(Deno.env.get("SYNC_WINDOW_FUTURE_DAYS") || "7");
+// Never pull anything before the current quarter starts — the tracker only counts
+// activity from Aug 1, 2026 onward, so there's no reason to import older meetings.
+const REPORTING_START = Deno.env.get("REPORTING_START") || "2026-08-01T00:00:00Z";
 const DEFAULT_LEVEL = Deno.env.get("DEFAULT_NBM_LEVEL") || "Director/Head of";
 
 // Roster discovery config (optional). Sheet source (preferred) …
@@ -98,19 +131,13 @@ function inferLevel(text: string): string {
   return DEFAULT_LEVEL;
 }
 
-/* ── Meeting-type inference ────────────────────────────────────────────────
- * Every auto-tracked meeting defaults to "NBM". If the event title/description
- * clearly names a later-stage meeting, tag it accordingly. Order matters: the
- * more specific Go/No-Go variants are checked before the generic ones. */
-const MEETING_TYPE_KEYWORDS: [RegExp, string][] = [
-  [/\b(eb)\b.*(go\s*[/-]?\s*no\s*[-]?\s*go)|\b(eb)\s+(go|no.?go)\b/i, "EB Go/No-Go"],
-  [/\bchampion\b.*(go\s*[/-]?\s*no\s*[-]?\s*go)|\bchampion\s+(go|no.?go)\b/i, "Champion Go/No-Go"],
-  [/\bgo\s*[/-]?\s*no\s*[-]?\s*go\b/i, "Champion Go/No-Go"],
-  [/\b(vo\s+progression|value\s+opportunity|vo)\b/i, "VO Progression"],
-];
-function inferMeetingType(text: string): string {
-  for (const [re, type] of MEETING_TYPE_KEYWORDS) if (re.test(text)) return type;
-  return "NBM";
+/* ── Meeting type ──────────────────────────────────────────────────────────
+ * An external meeting is just an external meeting: it's recorded as the neutral
+ * "Activity" type — NOT assumed to be an NBM. It's the AE's job to tag it (NBM,
+ * VO progression, Champion go/no-go or EB go/no-go). */
+const DEFAULT_MEETING_TYPE = "Activity";
+function defaultMeetingType(): string {
+  return DEFAULT_MEETING_TYPE;
 }
 
 function isInternal(email: string): boolean {
@@ -184,6 +211,41 @@ async function getAccessToken(subject: string, scope = CALENDAR_SCOPE): Promise<
   if (!res.ok) throw new Error(`token for ${subject}: ${body.error || res.status} ${body.error_description || ""}`);
   tokenCache.set(cacheKey, { token: body.access_token, exp: now + (body.expires_in || 3600) });
   return body.access_token;
+}
+
+/* ── Central-account OAuth (refresh token) ─────────────────────────────────
+ * Exchange the central account's long-lived refresh token for a short-lived
+ * access token. The scopes are whatever were granted at consent (we ask for
+ * calendar.readonly + spreadsheets.readonly). One token reads every calendar
+ * that's internally visible to the central account — no impersonation. */
+let oauthCache: { token: string; exp: number } | null = null;
+async function getOAuthToken(): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  if (oauthCache && oauthCache.exp - 60 > now) return oauthCache.token;
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      refresh_token: OAUTH_REFRESH_TOKEN,
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`oauth refresh: ${body.error || res.status} ${body.error_description || ""}`);
+  oauthCache = { token: body.access_token, exp: now + (body.expires_in || 3600) };
+  return body.access_token;
+}
+
+// Token to read an AE's calendar: central-account OAuth reads any internally
+// visible calendar directly; otherwise the service account impersonates the AE.
+async function calendarTokenFor(aeEmail: string): Promise<string> {
+  return OAUTH_ENABLED ? await getOAuthToken() : await getAccessToken(aeEmail);
+}
+// Token to read the roster Google Sheet (shared with whichever account we use).
+async function sheetToken(): Promise<string> {
+  return OAUTH_ENABLED ? await getOAuthToken() : await getAccessToken("", SHEETS_SCOPE);
 }
 
 type GEvent = {
@@ -381,7 +443,7 @@ function startedInfo(raw: string): { started: boolean; startDate: string } {
   return { started: true, startDate: todayISO };
 }
 async function rosterFromSheet(): Promise<RosterAE[]> {
-  const token = await getAccessToken("", SHEETS_SCOPE); // service account reads a shared sheet
+  const token = await sheetToken(); // central account or service account reads a shared sheet
   const tabs = ROSTER_SHEET_TABS.length ? ROSTER_SHEET_TABS : await getSheetTabTitles(token);
   const out: RosterAE[] = [];
   const seen = new Set<string>();
@@ -547,7 +609,8 @@ type NBMRow = {
 };
 
 async function run() {
-  if (!SA_EMAIL || !SA_KEY) throw new Error("Google service account env not configured (GOOGLE_SA_CLIENT_EMAIL / GOOGLE_SA_PRIVATE_KEY)");
+  if (!OAUTH_ENABLED && (!SA_EMAIL || !SA_KEY))
+    throw new Error("No Google auth configured: set GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN (central account) or GOOGLE_SA_CLIENT_EMAIL/PRIVATE_KEY (service account).");
   if (!COMPANY_DOMAINS.length) throw new Error("COMPANY_DOMAINS not configured");
 
   // Step 1 (optional): discover the roster from the Directory so newly-started
@@ -560,26 +623,32 @@ async function run() {
   }
 
   const now = new Date();
-  const timeMin = new Date(now.getTime() - PAST_DAYS * 864e5).toISOString();
+  // Scan back PAST_DAYS, but never earlier than the quarter start (Aug 1).
+  const windowStart = new Date(now.getTime() - PAST_DAYS * 864e5);
+  const reportingStart = new Date(REPORTING_START);
+  const timeMin = (windowStart > reportingStart ? windowStart : reportingStart).toISOString();
   const timeMax = new Date(now.getTime() + FUTURE_DAYS * 864e5).toISOString();
 
   // Active AEs that have a calendar mapped (includes anyone just discovered above).
   const aesRes = await sb("aes?select=id,name,calendar_email,active");
   const aes = (await aesRes.json()).filter((a: any) => a.calendar_email && a.active !== false);
 
-  // Existing calendar NBMs so we don't clobber manager edits: we only insert new
+  // Existing calendar rows so we don't clobber manager edits: we only insert new
   // ones and refresh detection fields, never override status once a human touched it.
-  const existRes = await sb("nbm_entries?source=eq.calendar&select=id,calendar_event_id,status,verified_by,verified_at,meeting_type");
+  // Keyed per (ae, event) because one meeting can be activity for several AEs.
+  const existRes = await sb("nbm_entries?source=eq.calendar&select=id,ae_id,calendar_event_id,status,verified_by,verified_at,meeting_type");
   const existing = new Map<string, any>();
-  (await existRes.json()).forEach((r: any) => existing.set(r.calendar_event_id, r));
+  (await existRes.json()).forEach((r: any) => existing.set(`${r.ae_id}::${r.calendar_event_id}`, r));
 
   let scanned = 0, created = 0, updated = 0;
   const toUpsert: NBMRow[] = [];
+  // Guard against the same (ae, event) appearing twice in one batch.
+  const seen = new Set<string>();
 
   for (const ae of aes) {
     let token: string;
     try {
-      token = await getAccessToken(ae.calendar_email);
+      token = await calendarTokenFor(ae.calendar_email);
     } catch (e) {
       console.error(`skip ${ae.name}: ${e.message}`);
       continue;
@@ -623,18 +692,21 @@ async function run() {
       const inferText = `${ev.summary || ""} ${ev.description || ""} ${primary.displayName || ""} ${primary.email || ""}`;
       const level = inferLevel(inferText);
       const eventId = ev.id;
-      const prior = existing.get(eventId);
+      const key = `${ae.id}::${eventId}`;
+      if (seen.has(key)) continue; // same meeting already recorded for this AE
+      seen.add(key);
+      const prior = existing.get(key);
       // Auto-tracked NBMs are counted automatically — no leader approval step.
       // Past accepted meetings are "done", upcoming ones "confirmed"; both count.
       // If a leader has manually overridden the status, respect that.
       const humanTouched = prior && prior.verified_by && !/auto/i.test(prior.verified_by);
       const status = humanTouched ? prior.status : (held ? "done" : "confirmed");
-      // Meeting type is inferred once at creation (default NBM); on re-sync we
-      // keep whatever's already there so inline edits in the dashboard survive.
-      const mtType = prior?.meeting_type || inferMeetingType(`${ev.summary || ""} ${ev.description || ""}`);
+      // New meetings are recorded as the neutral "Activity" type; on re-sync we
+      // keep whatever's already there so inline AE tags in the dashboard survive.
+      const mtType = prior?.meeting_type || defaultMeetingType();
 
       const row: NBMRow = {
-        id: prior?.id || `cal-${eventId}`,
+        id: prior?.id || `cal-${ae.id}-${eventId}`,
         ae_id: ae.id,
         week_key: mondayISO(start),
         level,
@@ -662,7 +734,7 @@ async function run() {
   }
 
   if (toUpsert.length) {
-    const res = await sb("nbm_entries?on_conflict=calendar_event_id", {
+    const res = await sb("nbm_entries?on_conflict=ae_id,calendar_event_id", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify(toUpsert),

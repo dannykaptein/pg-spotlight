@@ -62,13 +62,14 @@ alter table public.nbm_entries add column if not exists attendee_name  text;
 alter table public.nbm_entries add column if not exists attendee_title text;
 -- Auto-detected seniority level before any manager override (VP/CTO, etc.).
 alter table public.nbm_entries add column if not exists auto_level text;
--- Meeting type tag: NBM (default), VO Progression, Champion Go/No-Go, EB Go/No-Go.
-alter table public.nbm_entries add column if not exists meeting_type text default 'NBM';
+-- Meeting type tag: Activity (default), NBM, VO Progression, Champion Go/No-Go, EB Go/No-Go.
+-- An external meeting is recorded as neutral "Activity"; the AE tags the real type.
+alter table public.nbm_entries add column if not exists meeting_type text default 'Activity';
 
--- One NBM per calendar event: makes the edge function's upsert idempotent.
-create unique index if not exists nbm_entries_calendar_event_ux
-  on public.nbm_entries (calendar_event_id)
-  where calendar_event_id is not null;
+-- One row per (AE, calendar event): a single meeting is activity for every AE who
+-- attended, so we key on both. Non-partial so PostgREST's on_conflict can match it.
+create unique index if not exists nbm_entries_ae_event_ux
+  on public.nbm_entries (ae_id, calendar_event_id);
 
 create table if not exists public.jerseys (
   week_key  text not null,

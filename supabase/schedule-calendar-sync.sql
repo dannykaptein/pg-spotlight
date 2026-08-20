@@ -17,7 +17,7 @@ select cron.schedule(
   '0 * * * *',
   $$
   select net.http_post(
-    url     := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/calendar-sync',
+    url     := 'https://qodolcmtrpczpaueifyh.supabase.co/functions/v1/calendar-sync',
     headers := jsonb_build_object(
       'Content-Type',  'application/json',
       'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'calendar_sync_key')
