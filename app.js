@@ -485,14 +485,14 @@
       ? ` <b>${auto}</b> NBM${auto === 1 ? "" : "s"} tracked so far.`
       : "";
     return `
-      <div class="card card-pad" style="margin-bottom:16px;border-color:rgba(79,122,99,0.35);background:rgba(79,122,99,0.07)">
-        <b>Automatic tracking is on.</b>
-        <span style="color:var(--muted)">New Business Meetings are pulled straight from the team's calendars into one shared, live view — no logging, no approvals.${autoNote}</span>
+      <div class="card" style="margin-bottom:20px;display:flex;align-items:center;gap:12px;padding:14px 18px;border-left:3px solid var(--green)">
+        <span class="env-pill"><span class="dot"></span>Live</span>
+        <span style="font-size:13.5px"><b style="color:var(--ink)">Automatic tracking is on.</b>
+        <span style="color:var(--muted)"> New Business Meetings are pulled straight from the team's calendars into one shared, live view — no logging, no approvals.${autoNote}</span></span>
       </div>`;
   }
 
   function renderTopbar() {
-    const wn = weekNumber(state.weekKey);
     return `
       <div class="topbar">
         <div class="topbar-inner">
@@ -504,15 +504,6 @@
             </div>
           </div>
           <div class="topbar-spacer"></div>
-          <div class="week-pill">
-            <button data-action="week-prev" title="Previous week">‹</button>
-            <div class="label">
-              Week ${wn > 0 ? wn : "—"}
-              <small>${weekLabel(state.weekKey)}</small>
-            </div>
-            <button data-action="week-next" title="Next week">›</button>
-          </div>
-          <button class="btn sm" data-action="week-today">This week</button>
         </div>
       </div>`;
   }
