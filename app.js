@@ -664,7 +664,7 @@
 
     const kpis = `
       <div class="stat-strip">
-        <div class="stat"><div class="k">NBMs</div><div class="v">${total}</div></div>
+        <div class="stat"><div class="k">External meetings</div><div class="v">${total}</div></div>
         <div class="stat"><div class="k">Held</div><div class="v">${held} <small>· ${heldRate}%</small></div></div>
         <div class="stat"><div class="k">Next step booked</div><div class="v">${nextStep}</div></div>
         <div class="stat"><div class="k">AEs active</div><div class="v">${activeAeIds.size}</div></div>
@@ -726,13 +726,13 @@
               <td><div class="bar"><span style="width:${pct}%"></span></div></td>
             </tr>`;
         }).join("")
-      : `<tr><td colspan="5"><div class="empty"><div class="ico">🗓️</div><h3>No NBMs ${scope === "all" ? "yet" : "in this period"}</h3><p>Meetings appear here automatically once the calendar sync runs.</p></div></td></tr>`;
+      : `<tr><td colspan="5"><div class="empty"><div class="ico">🗓️</div><h3>No external meetings ${scope === "all" ? "yet" : "in this period"}</h3><p>Meetings appear here automatically once the calendar sync runs.</p></div></td></tr>`;
 
     return `
       <div class="section-head">
         <div>
           <h2>Insights</h2>
-          <p>NBM progress across EMEA · ${scopeLabel}</p>
+          <p>External-meeting progress across EMEA · ${scopeLabel}</p>
           ${pager}
         </div>
         <div class="seg">
@@ -751,7 +751,7 @@
           <thead>
             <tr>
               <th>Account Executive</th>
-              <th class="num">NBMs</th><th class="num">Held</th><th class="num" title="Share of NBMs held">Held&nbsp;%</th><th>Activity</th>
+              <th class="num">External meetings</th><th class="num">Held</th><th class="num" title="Share of external meetings held">Held&nbsp;%</th><th>Activity</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
