@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish PG Spotlight to GitHub Pages. Run from your own machine:
+# Publish EMEA AE Activity Tracker to GitHub Pages. Run from your own machine:
 #   ./publish.sh [repo-name]
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -8,7 +8,7 @@ REPO="${1:-pg-spotlight}"
 
 git init -b main 2>/dev/null || true
 git add -A
-git commit -m "PG Spotlight: World Championship 2026 weekly sales tracker" 2>/dev/null || echo "· nothing new to commit"
+git commit -m "EMEA AE Activity Tracker" 2>/dev/null || echo "· nothing new to commit"
 
 if ! gh auth status >/dev/null 2>&1; then
   echo "· GitHub CLI not authenticated — launching login…"

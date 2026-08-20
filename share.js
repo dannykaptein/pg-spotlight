@@ -1,4 +1,4 @@
-/* PG Spotlight — shared team sync (Supabase).
+/* EMEA AE Activity Tracker — shared team sync (Supabase).
  *
  * This file is intentionally self-contained so it keeps working even if app.js
  * is reset by an editor. It syncs at the localStorage layer:
@@ -88,15 +88,6 @@
     });
     return db;
   }
-  // Monday (date-only, UTC-safe) of an ISO date or datetime string.
-  function mondayISO(iso) {
-    var s = String(iso || "").slice(0, 10).split("-");
-    if (s.length < 3) return "";
-    var dt = new Date(Date.UTC(+s[0], +s[1] - 1, +s[2]));
-    if (isNaN(dt.getTime())) return "";
-    dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
-    return dt.toISOString().slice(0, 10);
-  }
   function readLocal() {
     try { return normalize(JSON.parse(localStorage.getItem(storeKey()) || "null")); }
     catch (e) { return normalize(null); }
@@ -114,17 +105,29 @@
 
   /* ---------- row <-> object conversions ---------- */
   function aeToRow(a) {
-    return { id: a.id, name: a.name, country: a.country || "", region: a.region || "", rvp: a.rvp || "", start_date: a.startDate || "", photo_url: a.photoUrl || "" };
+    return {
+      id: a.id, name: a.name, country: a.country || "", region: a.region || "", rvp: a.rvp || "",
+      start_date: a.startDate || "", photo_url: a.photoUrl || "",
+      calendar_email: a.calendarEmail || "", active: a.active !== false,
+    };
   }
   function rowToAE(r) {
-    return { id: r.id, name: r.name, country: r.country || "", region: r.region || "", rvp: r.rvp || "", startDate: r.start_date || "", photoUrl: r.photo_url || "" };
+    return {
+      id: r.id, name: r.name, country: r.country || "", region: r.region || "", rvp: r.rvp || "",
+      startDate: r.start_date || "", photoUrl: r.photo_url || "",
+      calendarEmail: r.calendar_email || "", active: r.active !== false,
+    };
   }
   function entryToRow(e) {
     return {
       id: e.id, ae_id: e.aeId, week_key: e.weekKey, level: e.level, account: e.account || "",
       value_pyramid: !!e.valuePyramid, held: !!e.held, calendarised: !!e.calendarised,
       date: e.date || "", note: e.note || "", status: e.status || "pending",
+      meeting_type: e.meetingType || "NBM",
       verified_by: e.verifiedBy || "", verified_at: e.verifiedAt || "", created_at: e.createdAt || new Date().toISOString(),
+      source: e.source || "manual", calendar_event_id: e.calendarEventId || null,
+      attendee_email: e.attendeeEmail || "", attendee_name: e.attendeeName || "", attendee_title: e.attendeeTitle || "",
+      auto_level: e.autoLevel || "",
     };
   }
   function rowToEntry(r) {
@@ -132,7 +135,11 @@
       id: r.id, aeId: r.ae_id, weekKey: r.week_key, level: r.level, account: r.account || "",
       valuePyramid: !!r.value_pyramid, held: !!r.held, calendarised: !!r.calendarised,
       date: r.date || "", note: r.note || "", status: r.status || "pending",
+      meetingType: r.meeting_type || "NBM",
       verifiedBy: r.verified_by || "", verifiedAt: r.verified_at || "", createdAt: r.created_at || "",
+      source: r.source || "manual", calendarEventId: r.calendar_event_id || "",
+      attendeeEmail: r.attendee_email || "", attendeeName: r.attendee_name || "", attendeeTitle: r.attendee_title || "",
+      autoLevel: r.auto_level || "",
     };
   }
 
@@ -161,6 +168,31 @@
         return true;
       });
   }
+  /* ---------- schema tolerance ---------- */
+  // The live DB may be on an older schema (e.g. missing calendar_email or
+  // meeting_type). Detect the real columns once and only write those, so upserts
+  // never 400 on unknown columns. Any new columns start syncing automatically
+  // once the database is migrated — no client change needed.
+  var AES_COLS = null, ENTRY_COLS = null;
+  var AES_BASE = ["id", "name", "country", "region", "rvp", "start_date", "photo_url", "created_at"];
+  var ENTRY_BASE = ["id", "ae_id", "week_key", "level", "account", "value_pyramid", "held", "calendarised", "date", "note", "status", "verified_by", "verified_at", "created_at"];
+  function detectSchema() {
+    return Promise.all([
+      sbGet("aes?select=*&limit=1").then(function (r) { return r[0] ? Object.keys(r[0]) : null; }).catch(function () { return null; }),
+      sbGet("nbm_entries?select=*&limit=1").then(function (r) { return r[0] ? Object.keys(r[0]) : null; }).catch(function () { return null; }),
+    ]).then(function (res) {
+      AES_COLS = res[0] || AES_BASE;
+      ENTRY_COLS = res[1] || ENTRY_BASE;
+    }).catch(function () { AES_COLS = AES_BASE; ENTRY_COLS = ENTRY_BASE; });
+  }
+  function prune(row, cols) {
+    if (!cols) return row;
+    var out = {};
+    Object.keys(row).forEach(function (k) { if (cols.indexOf(k) !== -1) out[k] = row[k]; });
+    return out;
+  }
+  function aeRow(a) { return prune(aeToRow(a), AES_COLS); }
+  function entryRow(e) { return prune(entryToRow(e), ENTRY_COLS); }
   function pullRemote() {
     return Promise.all([sbGet("aes?select=*"), sbGet("nbm_entries?select=*"), sbGet("jerseys?select=*")]).then(function (res) {
       var jerseys = {};
@@ -230,8 +262,8 @@
     remote = normalize(remote); merged = normalize(merged);
     var tA = indexById(remote.aes), tE = indexById(remote.entries);
     var mA = indexById(merged.aes), mE = indexById(merged.entries);
-    var upAes = merged.aes.filter(function (a) { return !eq(a, tA[a.id]); }).map(aeToRow);
-    var upEntries = merged.entries.filter(function (e) { return !eq(e, tE[e.id]); }).map(entryToRow);
+    var upAes = merged.aes.filter(function (a) { return !eq(a, tA[a.id]); }).map(aeRow);
+    var upEntries = merged.entries.filter(function (e) { return !eq(e, tE[e.id]); }).map(entryRow);
     var delAes = remote.aes.filter(function (a) { return !has(mA, a.id); }).map(function (a) { return a.id; });
     var delEntries = remote.entries.filter(function (e) { return !has(mE, e.id); }).map(function (e) { return e.id; });
 
@@ -355,55 +387,75 @@
   // The official campaign roster (name, team, start date). Replaces any demo
   // data and resets standings to zero. Runs once per browser (guarded by a flag);
   // stable IDs make re-runs idempotent (no duplicates).
-  var REAL_ROSTER_FLAG = "pg-real-roster-v3";
-  // [name, team, manager (verifies their NBMs), start date]
+  var REAL_ROSTER_FLAG = "pg-real-roster-v5";
+  // [name, team (region), team lead (RVP), start date, country code, work email]
+  // Mirrors the "AE name for PG App EMEA" sheet: six teams, correct leaders,
+  // and firstname.lastname@cursor.com calendar keys.
   var REAL_ROSTER = [
-    ["Charles Addai-Appiah", "UK", "Jason Creane", "2026-04-20"],
-    ["James Farnhill", "UK", "Jason Creane", "2026-05-11"],
-    ["Lauren Caska", "UK", "Jason Creane", "2026-06-01"],
-    ["Dylan Chambers", "UK", "Jason Creane", "2026-06-01"],
-    ["Ben Harknett", "UK", "Jason Creane", "2026-07-06"],
-    ["Jack Ferrari", "UK", "Jason Creane", "2026-06-08"],
-    ["Karim Chester", "UK", "Jason Creane", "2026-06-01"],
-    ["Michael Hart", "UK", "Jason Creane", "2026-06-08"],
-    ["Mounir Ben Saad", "France", "Benjamin Caller", "2026-04-12"],
-    ["Julien Le Postec", "France", "Benjamin Caller", "2026-05-18"],
-    ["Daniel Campo", "France", "Benjamin Caller", "2026-05-25"],
-    ["Aurelien Aissa", "France", "Benjamin Caller", "2026-06-15"],
-    ["Robert Glowacz", "Germany", "Timo Trunk", "2026-05-04"],
-    ["Vincent Le Magoariec", "Switzerland", "Timo Trunk", "2026-06-01"],
-    ["Sven Ehlhardt", "Germany", "Timo Trunk", "2026-07-01"],
-    ["Tobias Tritscher", "Germany", "Timo Trunk", "2026-08-05"],
-    ["Joerg Kassner", "Germany", "Timo Trunk", "2026-08-19"],
-    ["Gino Mommers", "Netherlands", "Danny Kaptein", "2026-05-11"],
-    ["Jeffrey de Roo", "Netherlands", "Danny Kaptein", "2026-06-01"],
-    ["Joren de Graaf", "Netherlands", "Danny Kaptein", "2026-06-29"],
-    ["Achraf Artimi", "Netherlands", "Danny Kaptein", "2026-07-06"],
-    ["Sjors Bonjer", "Netherlands", "Danny Kaptein", "2026-06-29"],
-    ["Mats Millnert", "Sweden", "Sia Y", "2026-05-04"],
-    ["Jonathan Falk Sundman", "Sweden", "Sia Y", "2026-06-29"],
-    ["Erik Rasmussen", "Sweden", "Sia Y", "2026-06-29"],
-    ["Elias Almqvist", "Sweden", "Sia Y", "2026-08-03"],
-    ["Sevinc Celebi", "Germany", "Kathrin Redlich", "2026-06-01"],
-    ["Marcquero Ermoza", "France", "Kathrin Redlich", ""],
-    ["Nicolas Chahoud", "France", "Kathrin Redlich", "2026-01-08"],
-    ["Yvonne Kyri", "Germany", "Kathrin Redlich", "2026-07-01"],
-    ["Pierre Phelippeau", "France", "Kathrin Redlich", ""],
-    ["Pieter D'Hondt", "Netherlands", "Kathrin Redlich", "2026-07-01"],
-    ["Alyssa Murre", "UK", "Kathrin Redlich", "2026-07-01"],
-    ["Tom Gudgeon", "UK", "Kathrin Redlich", "2026-09-01"],
+    ["Alyssa Murre", "GEO Enterprise", "Kathrin Redlich", "2026-07-01", "GB", "alyssa.murre@cursor.com"],
+    ["Tom Gudgeon", "GEO Enterprise", "Kathrin Redlich", "2026-09-01", "GB", "tom.gudgeon@cursor.com"],
+    ["Sid Power", "GEO Enterprise", "Kathrin Redlich", "", "GB", "sid.power@cursor.com"],
+    ["Robert Eyre", "GEO Enterprise", "Kathrin Redlich", "", "GB", "robert.eyre@cursor.com"],
+    ["Ludovica Peracino", "GEO Enterprise", "Kathrin Redlich", "", "IT", "ludovica.peracino@cursor.com"],
+    ["Mackeznie Drysdale", "GEO Enterprise", "Kathrin Redlich", "", "GB", "mackeznie.drysdale@cursor.com"],
+    ["Sevinc Celebi", "GEO Enterprise", "Kathrin Redlich", "2026-06-01", "DE", "sevinc.celebi@cursor.com"],
+    ["Yvonne Kyri", "GEO Enterprise", "Kathrin Redlich", "2026-07-01", "GB", "yvonne.kyri@cursor.com"],
+    ["Nicolas Chahoud", "GEO Enterprise", "Kathrin Redlich", "2026-01-08", "DE", "nicolas.chahoud@cursor.com"],
+    ["Marcquero Ermoza", "GEO Enterprise", "Kathrin Redlich", "", "ES", "marcquero.ermoza@cursor.com"],
+    ["Pierre Phelippeau", "GEO Enterprise", "Kathrin Redlich", "", "FR", "pierre.phelippeau@cursor.com"],
+    ["James Farnhill", "UKI", "Jacob Anderson", "2026-05-11", "GB", "james.farnhill@cursor.com"],
+    ["Lauren Caska", "UKI", "Jacob Anderson", "2026-06-01", "GB", "lauren.caska@cursor.com"],
+    ["Dylan Chambers", "UKI", "Jacob Anderson", "2026-06-01", "GB", "dylan.chambers@cursor.com"],
+    ["Jack Ferrari", "UKI", "Jacob Anderson", "2026-06-08", "GB", "jack.ferrari@cursor.com"],
+    ["Ivo Hayes", "UKI", "Jacob Anderson", "", "GB", "ivo.hayes@cursor.com"],
+    ["Ben Beaumont", "UKI", "Jacob Anderson", "", "GB", "ben.beaumont@cursor.com"],
+    ["Charles Addai-Appiah", "UKI", "Jason Creane", "2026-04-20", "GB", "charles.appiah@cursor.com"],
+    ["Danielle Broeze", "UKI", "Jason Creane", "", "GB", "danielle.broeze@cursor.com"],
+    ["James Daniel", "UKI", "Jason Creane", "", "GB", "james.daniel@cursor.com"],
+    ["Ramya Gopalakrishnan", "UKI", "Jason Creane", "", "GB", "ramya.gopalakrishnan@cursor.com"],
+    ["Sam Hesketh", "UKI", "Jason Creane", "", "GB", "sam.hesketh@cursor.com"],
+    ["Karim Chester", "UKI", "Jason Creane", "2026-06-01", "GB", "karim.chester@cursor.com"],
+    ["Michael Hart", "UKI", "Jason Creane", "2026-06-08", "GB", "michael.hart@cursor.com"],
+    ["Ben Harknett", "UKI", "Jason Creane", "2026-07-06", "GB", "ben.harknett@cursor.com"],
+    ["Jeffrey de Roo", "Benelux", "Danny Kaptein", "2026-06-01", "NL", "jeffrey.deroo@cursor.com"],
+    ["Joren de Graaf", "Benelux", "Danny Kaptein", "2026-06-29", "NL", "joren.degraaf@cursor.com"],
+    ["Sjors Bonjer", "Benelux", "Danny Kaptein", "2026-06-29", "NL", "sjors.bonjer@cursor.com"],
+    ["Gino Mommers", "Benelux", "Danny Kaptein", "2026-05-11", "NL", "gino.mommers@cursor.com"],
+    ["Pieter D`Hondt", "Benelux", "Danny Kaptein", "2026-07-01", "BE", "pieter.dhondt@cursor.com"],
+    ["Lotte Koop", "Benelux", "Danny Kaptein", "", "NL", "lotte.koop@cursor.com"],
+    ["Enrico Antonacci", "Benelux", "Danny Kaptein", "", "NL", "enrico.antonacci@cursor.com"],
+    ["Achraf Artimi", "Benelux", "Danny Kaptein", "2026-07-06", "NL", "achraf.artimi@cursor.com"],
+    ["Vincent Le Magoariec", "Central Europe", "Timo Trunk", "2026-06-01", "FR", "vincent.lemagoariec@cursor.com"],
+    ["Sven Ehlhardt", "Central Europe", "Timo Trunk", "2026-07-01", "DE", "sven.ehlhardt@cursor.com"],
+    ["Tobias Tritscher", "Central Europe", "Timo Trunk", "2026-08-05", "DE", "tobias.tritscher@cursor.com"],
+    ["Matthias Goellner", "Central Europe", "Timo Trunk", "", "DE", "matthias.goellner@cursor.com"],
+    ["Kevin Switala", "Central Europe", "Timo Trunk", "", "DE", "kevin.switala@cursor.com"],
+    ["Robert Glowacz", "Central Europe", "Timo Trunk", "2026-05-04", "PL", "robert.glowacz@cursor.com"],
+    ["Joerg Kassner", "Central Europe", "Timo Trunk", "2026-08-19", "DE", "joerg.kassner@cursor.com"],
+    ["Daniel Campo", "Southern Europe", "Ben Caller", "2026-05-25", "ES", "daniel.campo@cursor.com"],
+    ["Aurelien Aissa", "Southern Europe", "Ben Caller", "2026-06-15", "FR", "aurelien.aissa@cursor.com"],
+    ["Alexandre Paradelo", "Southern Europe", "Ben Caller", "", "ES", "alexandre.paradelo@cursor.com"],
+    ["Mounir Ben Saad", "Southern Europe", "Ben Caller", "2026-04-12", "FR", "mounir.bensaad@cursor.com"],
+    ["Julien Le Postec", "Southern Europe", "Ben Caller", "2026-05-18", "FR", "julien.lepostec@cursor.com"],
+    ["Elias Almqvist", "Nordics", "Sia Yaghoubi", "2026-08-03", "SE", "elias.almqvist@cursor.com"],
+    ["Eric Bodi Salén", "Nordics", "Sia Yaghoubi", "", "SE", "eric.salen@cursor.com"],
+    ["Ian Smith", "Nordics", "Sia Yaghoubi", "", "SE", "ian.smith@cursor.com"],
+    ["Camilla Kiernan", "Nordics", "Sia Yaghoubi", "", "SE", "camilla.kiernan@cursor.com"],
+    ["Erik Ekedahl", "Nordics", "Sia Yaghoubi", "", "SE", "erik.ekedahl@cursor.com"],
+    ["Mats Millnert", "Nordics", "Sia Yaghoubi", "2026-05-04", "SE", "mats.millnert@cursor.com"],
+    ["Jonathan Falk Sundman", "Nordics", "Sia Yaghoubi", "2026-06-29", "SE", "jonathan.falk.sundman@cursor.com"],
+    ["Erik Rasmussen", "Nordics", "Sia Yaghoubi", "2026-06-29", "DK", "erik.rasmussen@cursor.com"],
   ];
-  function teamToCountryCode(team) {
-    var map = { uk: "GB", "united kingdom": "GB", france: "FR", germany: "DE", switzerland: "CH", netherlands: "NL", sweden: "SE" };
-    var t = String(team || "").trim().toLowerCase();
-    return map[t] || String(team || "GB").trim().toUpperCase() || "GB";
-  }
   function slug(name) {
     return "ae-" + String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   }
   function buildRealRoster() {
     return REAL_ROSTER.map(function (row) {
-      return { id: slug(row[0]), name: row[0], country: teamToCountryCode(row[1]), region: row[1], rvp: row[2] || "", startDate: row[3] || "", photoUrl: "" };
+      return {
+        id: slug(row[0]), name: row[0], region: row[1], rvp: row[2] || "",
+        startDate: row[3] || "", country: (row[4] || "GB").toUpperCase(),
+        calendarEmail: row[5] || "", photoUrl: "", active: true,
+      };
     });
   }
   // One-time per-browser roster seed: the real roster becomes the local source
@@ -428,35 +480,13 @@
   function forceReplaceRemote() {
     var local = readLocal();
     var ops = [];
-    if (local.aes.length) ops.push(sbUpsert("aes", local.aes.map(aeToRow)));
+    if (local.aes.length) ops.push(sbUpsert("aes", local.aes.map(aeRow)));
     return Promise.all(ops).then(function () {
       // Snapshot the roster-only local state. Because this snapshot has no
       // entries/jerseys, the very next mergeDB() treats the server's rows as
       // "added remotely" and pulls them in instead of deleting them.
       writeSnap(local);
     });
-  }
-
-  // One-time migration: an NBM belongs to the week it was BOOKED in, so its
-  // weekKey is recomputed from its booking timestamp (createdAt). This runs once
-  // per browser; because every browser applies the same deterministic fix, the
-  // corrected weeks sync up to Supabase and become shared for the whole team
-  // (no manual server edits needed). Entries without a booking timestamp are
-  // left untouched.
-  var BOOKING_WEEK_FLAG = "pg-booking-week-v1";
-  function migrateBookingWeekOnce() {
-    try { if (localStorage.getItem(BOOKING_WEEK_FLAG)) return false; } catch (e) { return false; }
-    var local = readLocal();
-    var changed = false;
-    (local.entries || []).forEach(function (e) {
-      if (e && e.createdAt) {
-        var wk = mondayISO(e.createdAt);
-        if (wk && e.weekKey !== wk) { e.weekKey = wk; changed = true; }
-      }
-    });
-    if (changed) writeLocal(local);
-    try { localStorage.setItem(BOOKING_WEEK_FLAG, "1"); } catch (e) {}
-    return changed;
   }
 
   // Stamp managers into the locally stored DB immediately (so app.js, which reads
@@ -481,17 +511,18 @@
     ensureBar();
     restoreTab();
     cleanupStaleKeys();
-    var didReset = resetRealRosterOnce();
     var stamped = backfillLocalManagers();
-    var reweeked = migrateBookingWeekOnce();
-    if (didReset) {
-      forceReplaceRemote()
-        .then(function () { setOk(); pendingReload = true; tryReload(); })
-        .catch(function (err) { setErr(String((err && err.message) || err)); pendingReload = true; tryReload(); });
-    } else {
-      if (stamped || reweeked) { pendingReload = true; tryReload(); }
-      syncOnce();
-    }
+    // Learn the live schema before any write so upserts only send existing columns.
+    detectSchema().then(function () {
+      var didReset = resetRealRosterOnce();
+      if (didReset) {
+        return forceReplaceRemote()
+          .then(function () { setOk(); pendingReload = true; tryReload(); })
+          .catch(function (err) { setErr(String((err && err.message) || err)); pendingReload = true; tryReload(); });
+      }
+      if (stamped) { pendingReload = true; tryReload(); }
+      return syncOnce();
+    });
     setInterval(syncOnce, POLL_MS);
     document.addEventListener("visibilitychange", tryReload);
     window.addEventListener("focus", tryReload);
