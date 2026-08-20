@@ -488,7 +488,7 @@
       <div class="card" style="margin-bottom:20px;display:flex;align-items:center;gap:12px;padding:14px 18px;border-left:3px solid var(--green)">
         <span class="env-pill"><span class="dot"></span>Live</span>
         <span style="font-size:13.5px"><b style="color:var(--ink)">Automatic tracking is on.</b>
-        <span style="color:var(--muted)"> New Business Meetings are pulled straight from the team's calendars into one shared, live view — no logging, no approvals.${autoNote}</span></span>
+        <span style="color:var(--muted)"> Every meeting is pulled straight from the team's calendars and counted as activity — AEs just set the meeting type. No logging, no approvals.${autoNote}</span></span>
       </div>`;
   }
 
@@ -563,10 +563,11 @@
         <div class="eyebrow">EMEA Pipeline Generation</div>
         <h1>Welcome to the EMEA AE Activity Tracker</h1>
         <p class="lead">
-          An EMEA-wide Product Group dashboard that automatically tracks New Business Meetings (NBMs)
-          and how they progress — straight from the team's calendars. There's no manual logging and no
-          points or competition: it's simply a shared, live view of the pipeline-generating activity
-          happening across the EMEA teams.
+          An EMEA-wide Product Group dashboard that automatically tracks meeting activity — straight
+          from the team's calendars. Every meeting is counted as activity, and it's each AE's job to set
+          the right meeting type (NBM, VO progression, Champion go/no-go or EB go/no-go). There's no
+          manual logging and no points or competition: it's simply a shared, live view of the
+          pipeline-generating activity happening across the EMEA teams.
         </p>
         <div class="facts">${teams}</div>
         <div class="cta btn-row">
@@ -577,12 +578,12 @@
 
       <div class="section-head"><div><h2>What this is for</h2><p>Insight into pipeline-generating activity — not a scoreboard</p></div></div>
       <div class="rules-grid">
-        <div class="rule"><div class="ic">🗓️</div><b>Automatic, from calendars</b><p>New Business Meetings are detected from the team's calendars, so the picture stays current without anyone logging a thing.</p></div>
+        <div class="rule"><div class="ic">🗓️</div><b>Automatic, from calendars</b><p>Every meeting is detected from the team's calendars and counted as activity, so the picture stays current without anyone logging a thing.</p></div>
         <div class="rule"><div class="ic">🌍</div><b>Whole of EMEA</b><p>Covers every team — GEO Enterprise, UKI, Benelux, Central Europe, Southern Europe and Nordics — in one place.</p></div>
         <div class="rule"><div class="ic">🤝</div><b>Insight, not competition</b><p>No points, no leaderboard prizes. The aim is to understand where pipeline is being created and where it's stalling.</p></div>
       </div>
 
-      <div class="section-head" style="margin-top:20px"><div><h2>How to use it</h2><p>Three main sections, plus a meeting-type tag on every meeting</p></div></div>
+      <div class="section-head" style="margin-top:20px"><div><h2>How to use it</h2><p>Three main sections, plus a meeting type each AE sets on every meeting</p></div></div>
       <div class="rules-grid">
         ${sections.map((r) => `<div class="rule"><div class="ic">${r[0]}</div><b>${r[1]}</b><p>${esc(r[2])}</p></div>`).join("")}
       </div>
@@ -590,8 +591,9 @@
       <div class="card card-pad" style="margin-top:16px">
         <h2 style="font-size:16px;margin-top:0">🏷️ The meeting-type tag</h2>
         <p style="color:var(--muted);font-size:13.5px;margin:0 0 10px">
-          Meetings are pulled in automatically from calendars, and each one carries a meeting-type tag.
-          You can adjust the tag inline on any meeting if the automatic guess needs a tweak:
+          Every meeting pulled from a calendar is counted as activity and starts tagged as an <b>NBM</b>
+          by default. It's each AE's job to adjust the meeting type inline so it reflects what the meeting
+          actually was:
         </p>
         <div class="chip-row">${meetingTypeCards}</div>
       </div>
@@ -1067,14 +1069,14 @@
           ${
             recent.length
               ? recent.map(renderEntryRow).join("")
-              : `<div class="empty"><div class="ico">🗓️</div><p>No calendar NBMs tracked yet. Run a sync to pull them in.</p></div>`
+              : `<div class="empty"><div class="ico">🗓️</div><p>No calendar meetings tracked yet. Run a sync to pull them in.</p></div>`
           }
         </div>
       </div>`;
 
     return `
       <div class="section-head">
-        <div><h2>Calendar Sync</h2><p>New Business Meetings are detected automatically from Google Calendar</p></div>
+        <div><h2>Calendar Sync</h2><p>Meetings are detected automatically from Google Calendar and counted as activity</p></div>
       </div>
       ${statusCard}
       <div class="two-col" style="margin-top:16px">
@@ -1085,7 +1087,7 @@
             <li><span class="dot">▸</span><span>Scans each AE's calendar for meetings with <b>external attendees</b> (outside your company domain).</span></li>
             <li><span class="dot">▸</span><span>Infers the <b>NBM level</b> (VP/CTO, Director, Engineer) from the attendee's job title in the directory.</span></li>
             <li><span class="dot">▸</span><span>Marks a meeting <b>Held</b> when it's in the past and was accepted; detects a booked <b>next step</b> from follow-up events.</span></li>
-            <li><span class="dot">▸</span><span>Each meeting maps to <b>one NBM</b> (deduped by event id) and is <b>counted automatically</b> — no approval, no scoring.</span></li>
+            <li><span class="dot">▸</span><span>Each meeting is <b>counted as activity</b> (deduped by event id) and defaults to <b>NBM</b> — it's the AE's job to set the correct meeting type. No approval, no scoring.</span></li>
             <li><span class="dot">▸</span><span>Optionally <b>auto-detects the roster</b> from a shared Google Sheet (one tab per team) or the Directory, adding AEs and whole teams as people start.</span></li>
           </ul>
           <p class="meta" style="margin:10px 0 0">Full setup — Google service account, domain-wide delegation, roster discovery and scheduling — is in <code>docs/calendar-sync.md</code>.</p>
