@@ -12,6 +12,16 @@
    * Program configuration
    * ========================================================== */
   const PROGRAM_START = "2026-06-15"; // Monday the tracker started collecting
+  // New quarter kick-off. Meetings/NBMs dated before this are ignored everywhere
+  // (KPIs, insights, team profiles, calendar counts) — Q3 is a clean slate.
+  const REPORTING_START = "2026-08-01";
+  function entryDateISO(e) {
+    return String((e && (e.date || e.weekKey || e.createdAt)) || "").slice(0, 10);
+  }
+  function withinReporting(e) {
+    const d = entryDateISO(e);
+    return !d || d >= REPORTING_START;
+  }
   const CHEATSHEET_URL =
     "https://docs.google.com/document/d/1OQ-ZzWUa_GYJPjIkmdbvRTMXsesoJccmrae5zxqNRIc/edit?tab=t.0";
 
@@ -27,9 +37,9 @@
   // default. Users can change it inline on each entry row.
   const MEETING_TYPES = {
     NBM: { cls: "nbm", short: "NBM" },
-    "VO Progression": { cls: "vo", short: "VO Progression" },
-    "Champion Go/No-Go": { cls: "champ", short: "Champion Go/No-Go" },
-    "EB Go/No-Go": { cls: "eb", short: "EB Go/No-Go" },
+    "VO Progression": { cls: "vo", short: "VO progression" },
+    "Champion Go/No-Go": { cls: "champ", short: "Champion go/no-go" },
+    "EB Go/No-Go": { cls: "eb", short: "EB go/no-go" },
   };
   const DEFAULT_MEETING_TYPE = "NBM";
   function meetingType(e) {
@@ -372,7 +382,7 @@
   // An entry counts toward the standings once the leader has confirmed the
   // booking (base points) and keeps counting through "done" (with bonuses).
   function countsTowardStandings(e) {
-    return e.status === "confirmed" || e.status === "done";
+    return (e.status === "confirmed" || e.status === "done") && withinReporting(e);
   }
   function migrateStatus(s) {
     if (s === "booked" || s === "confirmed" || s === "done" || s === "rejected") return s;
@@ -480,7 +490,7 @@
   }
 
   function renderSyncBanner() {
-    const auto = db.entries.filter((e) => e.source === "calendar").length;
+    const auto = db.entries.filter((e) => e.source === "calendar" && withinReporting(e)).length;
     const autoNote = auto
       ? ` <b>${auto}</b> NBM${auto === 1 ? "" : "s"} tracked so far.`
       : "";
@@ -539,8 +549,8 @@
       <div class="stat-strip">
         <div class="stat"><div class="k">AEs on the board</div><div class="v">${active} <small>/ ${db.aes.length}</small></div></div>
         <div class="stat"><div class="k">NBMs this week</div><div class="v">${weekEntries.length} <small>· ${weekHeld} held</small></div></div>
-        <div class="stat"><div class="k">NBMs all-time</div><div class="v">${allTime.length}</div></div>
-        <div class="stat"><div class="k">Held rate · all-time</div><div class="v">${heldRate}% <small>· ${allHeld} held</small></div></div>
+        <div class="stat"><div class="k">NBMs since 1 Aug</div><div class="v">${allTime.length}</div></div>
+        <div class="stat"><div class="k">Held rate · since 1 Aug</div><div class="v">${heldRate}% <small>· ${allHeld} held</small></div></div>
       </div>`;
   }
 
@@ -612,7 +622,7 @@
         <h2 style="font-size:16px;margin-top:0">🔎 Using it for pipeline review</h2>
         <ul class="info-list">
           <li><span class="dot">▸</span><span><b>See NBM volume and held rates</b> at team and AE level, so conversations start from what actually happened.</span></li>
-          <li><span class="dot">▸</span><span><b>Track progression</b> through the <b>VO Progression</b>, <b>Champion Go/No-Go</b> and <b>EB Go/No-Go</b> stages.</span></li>
+          <li><span class="dot">▸</span><span><b>Track progression</b> through the <b>VO progression</b>, <b>Champion go/no-go</b> and <b>EB go/no-go</b> stages.</span></li>
           <li><span class="dot">▸</span><span><b>Spot where deals are advancing or stalling</b> — where next steps are being booked and where they aren't.</span></li>
           <li><span class="dot">▸</span><span><b>Ground the discussion in real activity</b> rather than self-reported numbers, because everything is drawn from calendars.</span></li>
         </ul>
@@ -625,7 +635,7 @@
     const lastSync = sync.lastRunAt
       ? new Date(sync.lastRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
       : "not yet run";
-    const autoCount = db.entries.filter((e) => e.source === "calendar").length;
+    const autoCount = db.entries.filter((e) => e.source === "calendar" && withinReporting(e)).length;
     const features = [
       ["🗓️", "Auto-tracked from calendars", "New Business Meetings are detected automatically from the team's Google Calendars — nothing to log by hand."],
       ["📈", "Progress, not a contest", "See how pipeline generation is trending across EMEA — volumes, seniority mix and held rates, not a race for prizes."],
@@ -1167,7 +1177,7 @@
     const s = db.calendarSync || {};
     const mapped = db.aes.filter((a) => a.calendarEmail && a.active !== false);
     const missing = db.aes.filter((a) => !a.calendarEmail && a.active !== false);
-    const auto = db.entries.filter((e) => e.source === "calendar");
+    const auto = db.entries.filter((e) => e.source === "calendar" && withinReporting(e));
     const recent = auto.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 12);
     const { ready } = calendarConfig();
 
