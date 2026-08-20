@@ -449,7 +449,7 @@
    * App state
    * ========================================================== */
   const state = {
-    tab: "home",
+    tab: "intro",
     weekKey: currentProgramWeekKey(),
     lbScope: "week", // week | month | quarter | all
     overviewRegion: "all", // "all" (holistic) or a REGIONS value
@@ -460,13 +460,10 @@
    * Rendering
    * ========================================================== */
   const TABS = [
-    { id: "intro", label: "Start here", icon: "👋" },
-    { id: "home", label: "Home", icon: "📣" },
+    { id: "intro", label: "How to use the tracker", icon: "👋" },
     { id: "overview", label: "Overview", icon: "🧭" },
     { id: "leaderboard", label: "Insights", icon: "📈" },
-    { id: "roster", label: "Team", icon: "👥" },
     { id: "calendar", label: "Calendar Sync", icon: "🗓️" },
-    { id: "program", label: "Playbook", icon: "📋" },
   ];
 
   function render() {
@@ -557,21 +554,18 @@
   function renderView() {
     switch (state.tab) {
       case "intro": return renderIntro();
-      case "home": return renderHome();
       case "overview": return renderOverview();
       case "leaderboard": return renderInsights();
-      case "roster": return renderRoster();
       case "calendar": return renderCalendar();
-      case "program": return renderProgram();
-      default: return renderHome();
+      default: return renderIntro();
     }
   }
 
   /* ---------- Introduction / Start here ---------- */
   function renderIntro() {
     const sections = [
+      ["🧭", "Overview", "Meetings booked quarter-to-date for every AE, broken down by meeting type — filter by region or see all EMEA teams together."],
       ["📈", "Insights", "Team-level KPIs and breakdowns — NBM volume, held rate and next steps, sliced by region, seniority and meeting type over week, month, quarter or all-time."],
-      ["👥", "Team", "A profile for every AE showing their NBM activity and held rate, so you can see momentum across all the EMEA teams at a glance."],
       ["🗓️", "Calendar Sync", "Where the automatic tracking lives — meetings are pulled straight from each AE's calendar, with nothing to log by hand."],
     ];
     const meetingTypeCards = Object.keys(MEETING_TYPES)
@@ -593,7 +587,7 @@
         <div class="facts">${teams}</div>
         <div class="cta btn-row">
           <button class="btn primary" data-tab="leaderboard">Go to Insights</button>
-          <button class="btn" data-tab="roster">Browse the Team</button>
+          <button class="btn" data-tab="overview">See the Overview</button>
         </div>
       </div>
 
@@ -1211,7 +1205,7 @@
           missing.length
             ? `<div class="meta" style="margin-bottom:6px">Missing a calendar email (won't be auto-tracked):</div>
                <div class="chip-row">${missing.map((a) => `<span class="chip">${countryByCode(a.country).flag} ${esc(a.name)}</span>`).join("")}</div>
-               <p class="meta" style="margin:10px 0 0">Add each AE's work email in <button class="btn sm ghost" data-tab="roster">Team → Edit</button> so the sync knows which calendar to read.</p>`
+               <p class="meta" style="margin:10px 0 0">These AEs need a <code>firstname.lastname@cursor.com</code> calendar email mapped in the roster so the sync knows which calendar to read.</p>`
             : `<p class="meta" style="margin:0">✅ Every active AE has a calendar mapped.</p>`
         }
       </div>`;
