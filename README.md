@@ -60,4 +60,4 @@ onto <https://app.netlify.com/drop>.
 - `supabase/functions/calendar-sync/` — Google Calendar → NBM edge function
 - `supabase/schedule-calendar-sync.sql` — pg_cron schedule for the sync
 - `docs/calendar-sync.md` — automatic tracking setup guide
-- `trophy.svg` — favicon
+- `money.svg` — favicon
