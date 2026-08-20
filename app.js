@@ -1,31 +1,40 @@
-/* PG Spotlight — World Championship PG 2026
- * Weekly sales progress tracker. Dependency-free vanilla JS.
- * Data persists in localStorage; works fully offline from file://.
+/* PG Dashboard — EMEA Pipeline Generation
+ * Ongoing team NBM (New Business Meeting) tracker. Dependency-free vanilla JS.
+ * Data persists in localStorage and syncs to Supabase (see share.js). NBMs can
+ * be logged manually or auto-tracked from the team's Google Calendars by the
+ * calendar-sync edge function (see supabase/functions/calendar-sync).
+ * Works fully offline from file://.
  */
 (function () {
   "use strict";
 
   /* ============================================================
-   * Program configuration (from the PG Spotlight brief)
+   * Program configuration
    * ========================================================== */
-  const PROGRAM_START = "2026-06-15"; // Monday, kick-off
+  const PROGRAM_START = "2026-06-15"; // Monday the tracker started collecting
   const CHEATSHEET_URL =
     "https://docs.google.com/document/d/1OQ-ZzWUa_GYJPjIkmdbvRTMXsesoJccmrae5zxqNRIc/edit?tab=t.0";
-  const WEEKLY_WINNER_COUNT = 6;
 
-  // NBM level -> base points & max achievable (per scoring rubric).
+  // NBM seniority level -> label + colour class. Used only to break down where
+  // pipeline is coming from; there is no scoring or weighting.
   const LEVELS = {
-    "VP/CTO": { base: 3, max: 8, cls: "vp", short: "VP / CTO" },
-    "Director/Head of": { base: 2, max: 7, cls: "dir", short: "Director / Head of" },
-    Engineer: { base: 1, max: 6, cls: "eng", short: "Engineer" },
+    "VP/CTO": { cls: "vp", short: "VP / CTO" },
+    "Director/Head of": { cls: "dir", short: "Director / Head of" },
+    Engineer: { cls: "eng", short: "Engineer" },
   };
 
-  // Scoring components beyond level base points.
-  const COMPONENTS = [
-    { key: "valuePyramid", label: "Value Pyramid / POV", hint: "Value Pyramid or Point of View used", pts: 2 },
-    { key: "held", label: "Held / Done", hint: "Meeting actually took place", pts: 2 },
-    { key: "calendarised", label: "Calendarised next step", hint: "Concrete next step booked in the calendar", pts: 1 },
-  ];
+  // Meeting type -> label + colour class. Every entry carries one; "NBM" is the
+  // default. Users can change it inline on each entry row.
+  const MEETING_TYPES = {
+    NBM: { cls: "nbm", short: "NBM" },
+    "VO Progression": { cls: "vo", short: "VO Progression" },
+    "Champion Go/No-Go": { cls: "champ", short: "Champion Go/No-Go" },
+    "EB Go/No-Go": { cls: "eb", short: "EB Go/No-Go" },
+  };
+  const DEFAULT_MEETING_TYPE = "NBM";
+  function meetingType(e) {
+    return MEETING_TYPES[e && e.meetingType] ? e.meetingType : DEFAULT_MEETING_TYPE;
+  }
 
   const COUNTRIES = [
     { code: "GB", name: "United Kingdom", flag: "🇬🇧", color: "#cf2e3f" },
@@ -51,13 +60,12 @@
   ];
 
   const REGIONS = [
-    "UK & Ireland",
-    "DACH",
-    "France",
+    "GEO Enterprise",
+    "UKI",
     "Benelux",
-    "Nordics",
+    "Central Europe",
     "Southern Europe",
-    "Middle East & Africa",
+    "Nordics",
   ];
 
   /* ============================================================
@@ -117,6 +125,37 @@
   function weekEndKey(weekKey) {
     return toISO(addDays(parseDate(weekKey), 4));
   }
+  // ── Rolling-period helpers (used by the leaderboard scope switch) ──────────
+  // A period is described by an inclusive [start, end] Monday-week range plus a
+  // human label. `ref` is any weekKey inside the period.
+  function periodRange(scope, ref) {
+    const d = parseDate(ref);
+    if (scope === "month") {
+      const start = new Date(d.getFullYear(), d.getMonth(), 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      return { start, end, label: d.toLocaleDateString("en-GB", { month: "long", year: "numeric" }) };
+    }
+    if (scope === "quarter") {
+      const q = Math.floor(d.getMonth() / 3);
+      const start = new Date(d.getFullYear(), q * 3, 1);
+      const end = new Date(d.getFullYear(), q * 3 + 3, 0);
+      return { start, end, label: `Q${q + 1} ${d.getFullYear()}` };
+    }
+    // all-time
+    return { start: parseDate(PROGRAM_START), end: new Date(2999, 0, 1), label: "All time" };
+  }
+  function shiftPeriod(scope, ref, dir) {
+    const d = parseDate(ref);
+    if (scope === "month") return toISO(new Date(d.getFullYear(), d.getMonth() + dir, 1));
+    if (scope === "quarter") return toISO(new Date(d.getFullYear(), d.getMonth() + dir * 3, 1));
+    return ref; // all-time doesn't move
+  }
+  // Is an entry's booking week inside the given [start,end] date range?
+  function entryInRange(e, start, end) {
+    const wk = e.weekKey || weekKeyForDate(e.createdAt || e.date);
+    const d = parseDate(wk);
+    return d >= mondayOf(start) && d <= end;
+  }
   function isActiveInWeek(ae, weekKey) {
     return !ae.startDate || ae.startDate <= weekEndKey(weekKey);
   }
@@ -135,31 +174,10 @@
   }
 
   /* ============================================================
-   * Scoring engine
-   * ========================================================== */
-  function entryPoints(e) {
-    // Points only start counting once the RVP has confirmed the booking.
-    // A freshly booked (or rejected) meeting scores nothing yet.
-    if (e.status !== "confirmed" && e.status !== "done") return 0;
-    const lvl = LEVELS[e.level] || { base: 0 };
-    let p = lvl.base; // base counts on confirmation
-    if (e.held) p += 2; // Held: auto-added when the leader marks the meeting done
-    if (e.valuePyramid) p += 2; // leader-ticked after the meeting
-    if (e.calendarised) p += 1; // leader-ticked after the meeting
-    return p;
-  }
-  // Points an AE locks in the moment the booking is confirmed (preview on the
-  // log form). The outcome bonuses are added later by the leader.
-  function draftPoints(d) {
-    const lvl = LEVELS[d.level] || { base: 0 };
-    return lvl.base;
-  }
-
-  /* ============================================================
    * Persistence
    * ========================================================== */
   const STORE_KEY = "pg-spotlight-v1";
-  let db = { aes: [], entries: [], jerseys: {}, settings: { managerName: "" } };
+  let db = { aes: [], entries: [], jerseys: {}, settings: { managerName: "" }, calendarSync: null };
 
   function save() {
     try {
@@ -188,9 +206,12 @@
             status: migrateStatus(e.status),
             verifiedBy: e.verifiedBy || "",
             verifiedAt: e.verifiedAt || "",
+            // Entries predating meeting types default to NBM.
+            meetingType: MEETING_TYPES[e.meetingType] ? e.meetingType : DEFAULT_MEETING_TYPE,
           })),
           jerseys: parsed.jerseys || {},
           settings: parsed.settings || { managerName: "" },
+          calendarSync: parsed.calendarSync || null,
         };
         return;
       } catch (e) {
@@ -206,26 +227,92 @@
    * (All editable; rename to your real roster.)
    * ========================================================== */
   function seed() {
+    // Roster mirrors the EMEA "AE name for PG App" sheet (Leader / Team / AE).
+    // Country is a per-team default until the sheet carries a country column.
     const roster = [
-      ["Olivia Bennett", "GB", "UK & Ireland", "James Whitfield"],
-      ["Liam O'Connor", "IE", "UK & Ireland", "James Whitfield"],
-      ["Sophie Laurent", "FR", "France", "James Whitfield"],
-      ["Lucas Moreau", "FR", "France", "Camille Dubois"],
-      ["Mia Schneider", "DE", "DACH", "Camille Dubois"],
-      ["Noah Weber", "DE", "DACH", "Camille Dubois"],
-      ["Emma Fischer", "AT", "DACH", "Camille Dubois"],
-      ["Daan Visser", "NL", "Benelux", "Sven Eriksson"],
-      ["Charlotte Janssen", "BE", "Benelux", "Sven Eriksson"],
-      ["Lukas Berg", "SE", "Nordics", "Sven Eriksson"],
-      ["Ingrid Hansen", "NO", "Nordics", "Sven Eriksson"],
-      ["Mette Sørensen", "DK", "Nordics", "Sven Eriksson"],
-      ["Aino Virtanen", "FI", "Nordics", "Sven Eriksson"],
-      ["Mateo Romano", "IT", "Southern Europe", "Paolo Ricci"],
-      ["Lucia Fernández", "ES", "Southern Europe", "Paolo Ricci"],
-      ["Tiago Costa", "PT", "Southern Europe", "Paolo Ricci"],
-      ["Omar Al-Rashid", "AE", "Middle East & Africa", "Paolo Ricci"],
-      ["Thabo Nkosi", "ZA", "Middle East & Africa", "Paolo Ricci"],
+      ["Alyssa Murre", "GB", "GEO Enterprise", "Kathrin Redlich"],
+      ["Tom Gudgeon", "GB", "GEO Enterprise", "Kathrin Redlich"],
+      ["Sid Power", "GB", "GEO Enterprise", "Kathrin Redlich"],
+      ["Robert Eyre", "GB", "GEO Enterprise", "Kathrin Redlich"],
+      ["Ludovica Peracino", "IT", "GEO Enterprise", "Kathrin Redlich"],
+      ["Mackeznie Drysdale", "GB", "GEO Enterprise", "Kathrin Redlich"],
+      ["Sevinc Celebi", "DE", "GEO Enterprise", "Kathrin Redlich"],
+      ["Yvonne Kyri", "GB", "GEO Enterprise", "Kathrin Redlich"],
+      ["Nicolas Chahoud", "DE", "GEO Enterprise", "Kathrin Redlich"],
+      ["Marcquero Ermoza", "ES", "GEO Enterprise", "Kathrin Redlich"],
+      ["Pierre Phelippeau", "FR", "GEO Enterprise", "Kathrin Redlich"],
+      ["James Farnhill", "GB", "UKI", "Jacob Anderson"],
+      ["Lauren Caska", "GB", "UKI", "Jacob Anderson"],
+      ["Dylan Chambers", "GB", "UKI", "Jacob Anderson"],
+      ["Jack Ferrari", "GB", "UKI", "Jacob Anderson"],
+      ["Ivo Hayes", "GB", "UKI", "Jacob Anderson"],
+      ["Ben Beaumont", "GB", "UKI", "Jacob Anderson"],
+      ["Charles Addai-Appiah", "GB", "UKI", "Jason Creane"],
+      ["Danielle Broeze", "GB", "UKI", "Jason Creane"],
+      ["James Daniel", "GB", "UKI", "Jason Creane"],
+      ["Ramya Gopalakrishnan", "GB", "UKI", "Jason Creane"],
+      ["Sam Hesketh", "GB", "UKI", "Jason Creane"],
+      ["Karim Chester", "GB", "UKI", "Jason Creane"],
+      ["Michael Hart", "GB", "UKI", "Jason Creane"],
+      ["Ben Harknett", "GB", "UKI", "Jason Creane"],
+      ["Jeffrey de Roo", "NL", "Benelux", "Danny Kaptein"],
+      ["Joren de Graaf", "NL", "Benelux", "Danny Kaptein"],
+      ["Sjors Bonjer", "NL", "Benelux", "Danny Kaptein"],
+      ["Gino Mommers", "NL", "Benelux", "Danny Kaptein"],
+      ["Pieter D`Hondt", "BE", "Benelux", "Danny Kaptein"],
+      ["Lotte Koop", "NL", "Benelux", "Danny Kaptein"],
+      ["Enrico Antonacci", "NL", "Benelux", "Danny Kaptein"],
+      ["Achraf Artimi", "NL", "Benelux", "Danny Kaptein"],
+      ["Vincent Le Magoariec", "FR", "Central Europe", "Timo Trunk"],
+      ["Sven Ehlhardt", "DE", "Central Europe", "Timo Trunk"],
+      ["Tobias Tritscher", "DE", "Central Europe", "Timo Trunk"],
+      ["Matthias Goellner", "DE", "Central Europe", "Timo Trunk"],
+      ["Kevin Switala", "DE", "Central Europe", "Timo Trunk"],
+      ["Robert Glowacz", "PL", "Central Europe", "Timo Trunk"],
+      ["Joerg Kassner", "DE", "Central Europe", "Timo Trunk"],
+      ["Daniel Campo", "ES", "Southern Europe", "Ben Caller"],
+      ["Aurelien Aissa", "FR", "Southern Europe", "Ben Caller"],
+      ["Alexandre Paradelo", "ES", "Southern Europe", "Ben Caller"],
+      ["Mounir Ben Saad", "FR", "Southern Europe", "Ben Caller"],
+      ["Julien Le Postec", "FR", "Southern Europe", "Ben Caller"],
+      ["Elias Almqvist", "SE", "Nordics", "Sia Yaghoubi"],
+      ["Eric Bodi Salén", "SE", "Nordics", "Sia Yaghoubi"],
+      ["Ian Smith", "SE", "Nordics", "Sia Yaghoubi"],
+      ["Camilla Kiernan", "SE", "Nordics", "Sia Yaghoubi"],
+      ["Erik Ekedahl", "SE", "Nordics", "Sia Yaghoubi"],
+      ["Mats Millnert", "SE", "Nordics", "Sia Yaghoubi"],
+      ["Jonathan Falk Sundman", "SE", "Nordics", "Sia Yaghoubi"],
+      ["Erik Rasmussen", "DK", "Nordics", "Sia Yaghoubi"],
     ];
+    // Work email = first.[surname parts].@cursor.com, accents folded.
+    // Name particles (de, le, ben, van …) attach to the following surname with
+    // no dot (Jeffrey de Roo -> jeffrey.deroo) while regular parts stay dotted
+    // (Jonathan Falk Sundman -> jonathan.falk.sundman) — this is the calendar key.
+    // Names the general algorithm can't derive (dropped middle name / hyphen).
+    const EMAIL_OVERRIDES = {
+      "Eric Bodi Salén": "eric.salen@cursor.com",
+      "Charles Addai-Appiah": "charles.appiah@cursor.com",
+    };
+    const emailFor = (name) => {
+      const key = String(name).trim();
+      if (EMAIL_OVERRIDES[key]) return EMAIL_OVERRIDES[key];
+      const slug = (s) =>
+        String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9-]/g, "");
+      const particles = new Set(["de", "den", "der", "van", "von", "la", "le", "du", "da", "di", "del", "dos", "das", "ben", "bin", "al", "el", "d"]);
+      const tokens = String(name).trim().split(/\s+/);
+      const first = slug(tokens.shift() || "");
+      const parts = [];
+      let carry = "";
+      for (const t of tokens) {
+        const s = slug(t);
+        if (!s) continue;
+        if (particles.has(s)) { carry += s; continue; }
+        parts.push(carry + s);
+        carry = "";
+      }
+      if (carry) parts.push(carry);
+      return `${[first, ...parts].filter(Boolean).join(".")}@cursor.com`;
+    };
     db.aes = roster.map(([name, code, region, rvp]) => ({
       id: uid(),
       name,
@@ -233,6 +320,7 @@
       region,
       rvp,
       startDate: PROGRAM_START,
+      calendarEmail: emailFor(name),
     }));
 
     // Seed a realistic kick-off week so the boards aren't empty.
@@ -253,6 +341,9 @@
         // most done — to demo every stage of the leader workflow.
         const status = r === 0 || r === 7 ? "booked" : r === 2 || r === 5 ? "confirmed" : "done";
         const counted = status !== "booked";
+        // Mostly NBMs, with a deterministic sprinkle of other types for demo.
+        const mtKeys = Object.keys(MEETING_TYPES);
+        const meetingType = r >= 8 ? mtKeys[1 + ((i + j) % (mtKeys.length - 1))] : DEFAULT_MEETING_TYPE;
         entries.push({
           id: uid(),
           aeId: ae.id,
@@ -265,6 +356,7 @@
           date: toISO(addDays(parseDate(wk), j % 5)),
           note: "",
           status: status,
+          meetingType: meetingType,
           verifiedBy: counted ? "System (seed)" : "",
           verifiedAt: counted ? toISO(addDays(parseDate(wk), 4)) : "",
         });
@@ -293,46 +385,54 @@
   }
   function leaderboard(scope, weekKey) {
     // Official standings only count manager-verified NBMs.
-    const pool = (scope === "week" ? entriesForWeek(weekKey) : db.entries).filter(countsTowardStandings);
+    // week = that week's bookings · month/quarter = every booking week in the
+    // calendar month/quarter of weekKey · all = every booking week (all-time).
+    const isWeek = scope === "week";
+    let pool;
+    if (isWeek) {
+      pool = entriesForWeek(weekKey);
+    } else {
+      const { start, end } = periodRange(scope, weekKey);
+      pool = db.entries.filter((e) => entryInRange(e, start, end));
+    }
+    pool = pool.filter(countsTowardStandings);
     const map = new Map();
-    const aes = scope === "week" ? activeAEsForWeek(weekKey) : db.aes;
-    aes.forEach((ae) => map.set(ae.id, { ae, points: 0, nbms: 0, held: 0, best: 0 }));
+    const aes = isWeek ? activeAEsForWeek(weekKey) : db.aes;
+    aes.forEach((ae) => map.set(ae.id, { ae, nbms: 0, held: 0, auto: 0 }));
     pool.forEach((e) => {
-      const row = map.get(e.aeId);
-      if (!row) return;
-      const p = entryPoints(e);
-      row.points += p;
+      let row = map.get(e.aeId);
+      if (!row) {
+        const ae = db.aes.find((a) => a.id === e.aeId);
+        if (!ae) return;
+        row = { ae, nbms: 0, held: 0, auto: 0 };
+        map.set(e.aeId, row);
+      }
       row.nbms += 1;
       if (e.held) row.held += 1;
-      if (p > row.best) row.best = p;
+      if (e.source === "calendar") row.auto += 1;
     });
     return [...map.values()].sort(
-      (a, b) => b.points - a.points || b.held - a.held || a.ae.name.localeCompare(b.ae.name)
+      (a, b) => b.nbms - a.nbms || b.held - a.held || a.ae.name.localeCompare(b.ae.name)
     );
   }
   function aeSeasonStats(aeId) {
-    let points = 0, nbms = 0, held = 0, pending = 0;
+    let nbms = 0, held = 0;
     db.entries.forEach((e) => {
       if (e.aeId !== aeId) return;
-      nbms += 1;
-      if (e.status === "booked") pending += 1; // awaiting leader confirmation
       if (!countsTowardStandings(e)) return;
-      points += entryPoints(e);
+      nbms += 1;
       if (e.held) held += 1;
     });
-    return { points, nbms, held, pending };
+    return { nbms, held };
   }
-  function paniniRating(stats, rank) {
-    // The player-card rating grows with verified commercial progress.
-    const activity = Math.min(12, stats.nbms);
-    const execution = Math.min(10, stats.held * 2);
-    const podiumBoost = rank <= 3 ? 4 - rank : 0;
-    const ovr = Math.min(99, 50 + stats.points * 2 + activity + execution + podiumBoost);
-    if (ovr >= 92) return { ovr, cls: "lvl-legend", label: "World Class" };
-    if (ovr >= 84) return { ovr, cls: "lvl-elite", label: "Captain" };
-    if (ovr >= 76) return { ovr, cls: "lvl-gold", label: "Playmaker" };
-    if (ovr >= 65) return { ovr, cls: "lvl-mid", label: "Rising Star" };
-    return { ovr, cls: "lvl-low", label: "Prospect" };
+  // Colour band for a Team card — based on NBM activity, not a score.
+  function cardBand(stats) {
+    const n = stats.nbms;
+    if (n >= 12) return "lvl-legend";
+    if (n >= 8) return "lvl-elite";
+    if (n >= 5) return "lvl-gold";
+    if (n >= 2) return "lvl-mid";
+    return "lvl-low";
   }
 
   /* ============================================================
@@ -341,32 +441,18 @@
   const state = {
     tab: "home",
     weekKey: currentProgramWeekKey(),
-    lbScope: "week", // week | season
-    draft: blankDraft(),
+    lbScope: "week", // week | month | quarter | all
     modal: null, // { mode:'add'|'edit', ae }
-    verifyMgr: "", // filter the verify queue to one manager's AEs
   };
-  function blankDraft() {
-    // AEs only book the meeting; outcome bonuses are added by the leader later.
-    return {
-      aeId: "",
-      account: "",
-      level: "VP/CTO",
-      date: "",
-      note: "",
-    };
-  }
 
   /* ============================================================
    * Rendering
    * ========================================================== */
   const TABS = [
-    { id: "home", label: "Spotlight", icon: "📣" },
-    { id: "leaderboard", label: "Leaderboard", icon: "🏆" },
-    { id: "roster", label: "Squad", icon: "🃏" },
-    { id: "log", label: "Log NBM", icon: "✍️" },
-    { id: "verify", label: "Verify", icon: "✅" },
-    { id: "winners", label: "Weekly Winners", icon: "👕" },
+    { id: "home", label: "Overview", icon: "📣" },
+    { id: "leaderboard", label: "Insights", icon: "📈" },
+    { id: "roster", label: "Team", icon: "👥" },
+    { id: "calendar", label: "Calendar Sync", icon: "🗓️" },
     { id: "program", label: "Playbook", icon: "📋" },
   ];
 
@@ -380,22 +466,25 @@
         ${renderStats()}
         <div id="view">${renderView()}</div>
         <div class="footer-note">
-          PG Spotlight · World Championship PG 2026 · shared team data is connected
+          PG Dashboard · EMEA Pipeline Generation · shared team data is connected
         </div>
       </div>
       <div id="toast" class="toast"></div>
       <div id="modal-root"></div>
     `;
     bindGlobal();
-    if (state.tab === "log") bindLogForm();
     renderModal();
   }
 
   function renderSyncBanner() {
+    const auto = db.entries.filter((e) => e.source === "calendar").length;
+    const autoNote = auto
+      ? ` <b>${auto}</b> NBM${auto === 1 ? "" : "s"} tracked so far.`
+      : "";
     return `
       <div class="card card-pad" style="margin-bottom:16px;border-color:rgba(46,204,113,0.38);background:rgba(46,204,113,0.08)">
-        <b>Shared competition mode is on.</b>
-        <span style="color:var(--muted)">Everyone's submitted and verified NBMs are syncing into the same leaderboard.</span>
+        <b>Automatic tracking is on.</b>
+        <span style="color:var(--muted)">New Business Meetings are pulled straight from the team's calendars into one shared, live view — no logging, no approvals.${autoNote}</span>
       </div>`;
   }
 
@@ -405,10 +494,10 @@
       <div class="topbar">
         <div class="topbar-inner">
           <div class="brand">
-            <div class="crest">🏆</div>
+            <div class="crest">📊</div>
             <div>
-              <div class="sub">World Championship</div>
-              <h1>PG Spotlight 2026</h1>
+              <div class="sub">EMEA Pipeline Generation</div>
+              <h1>PG Dashboard</h1>
             </div>
           </div>
           <div class="topbar-spacer"></div>
@@ -426,201 +515,243 @@
   }
 
   function renderTabs() {
-    const weekPending = db.entries.filter(
-      (e) => e.weekKey === state.weekKey && e.status === "booked"
-    ).length;
     return `
       <div class="tabs">
         ${TABS.map((t) => {
-          const badge =
-            t.id === "verify" && weekPending > 0
-              ? `<span class="count">${weekPending}</span>`
-              : "";
           return `<button class="tab ${state.tab === t.id ? "active" : ""}" data-tab="${t.id}">
-              <span>${t.icon}</span>${t.label}${badge}
+              <span>${t.icon}</span>${t.label}
             </button>`;
         }).join("")}
       </div>`;
   }
 
   function renderStats() {
-    const weekEntries = entriesForWeek(state.weekKey);
-    const counting = weekEntries.filter(countsTowardStandings);
-    const booked = weekEntries.filter((e) => e.status === "booked").length;
-    const weekPoints = counting.reduce((s, e) => s + entryPoints(e), 0);
-    const seasonPoints = db.entries.filter(countsTowardStandings).reduce((s, e) => s + entryPoints(e), 0);
-    const onboard = activeAEsForWeek(state.weekKey).length;
+    const weekEntries = entriesForWeek(state.weekKey).filter(countsTowardStandings);
+    const weekHeld = weekEntries.filter((e) => e.held).length;
+    const allTime = db.entries.filter(countsTowardStandings);
+    const allHeld = allTime.filter((e) => e.held).length;
+    const active = db.aes.filter((a) => a.active !== false).length;
+    const heldRate = allTime.length ? Math.round((allHeld / allTime.length) * 100) : 0;
     return `
       <div class="stat-strip">
-        <div class="stat"><div class="k">AEs onboard</div><div class="v">${onboard} <small>/ ${db.aes.length}</small></div></div>
-        <div class="stat"><div class="k">NBMs this week</div><div class="v">${weekEntries.length} <small>· ${counting.length} counting · ${booked} to confirm</small></div></div>
-        <div class="stat"><div class="k">Points · week</div><div class="v">${weekPoints}</div></div>
-        <div class="stat"><div class="k">Points · season</div><div class="v">${seasonPoints}</div></div>
+        <div class="stat"><div class="k">AEs on the board</div><div class="v">${active} <small>/ ${db.aes.length}</small></div></div>
+        <div class="stat"><div class="k">NBMs this week</div><div class="v">${weekEntries.length} <small>· ${weekHeld} held</small></div></div>
+        <div class="stat"><div class="k">NBMs all-time</div><div class="v">${allTime.length}</div></div>
+        <div class="stat"><div class="k">Held rate · all-time</div><div class="v">${heldRate}% <small>· ${allHeld} held</small></div></div>
       </div>`;
   }
 
   function renderView() {
     switch (state.tab) {
       case "home": return renderHome();
-      case "leaderboard": return renderLeaderboard();
+      case "leaderboard": return renderInsights();
       case "roster": return renderRoster();
-      case "log": return renderLog();
-      case "verify": return renderVerify();
-      case "winners": return renderWinners();
+      case "calendar": return renderCalendar();
       case "program": return renderProgram();
-      default: return "";
+      default: return renderHome();
     }
   }
 
-  /* ---------- Spotlight / Home ---------- */
+  /* ---------- Overview / Home ---------- */
   function renderHome() {
-    const kickoff = parseDate(PROGRAM_START).toLocaleDateString("en-GB", {
-      weekday: "long", day: "numeric", month: "long", year: "numeric",
-    });
-    const rules = [
-      ["🃏", "Panini squad format", "Every participating AE gets a collectible player card. Watch your OVR climb as you bank verified points."],
-      ["🏟️", "Tournament style", "Points accumulate week to week in a knock-out-style race. A multiplier boosts scores in the finals."],
-      ["🎯", "Cost & business case", "Lead with value. Anchor conversations on the Gartner report and a clear cost / business case."],
-      ["✅", "Book, confirm, deliver", "AEs book NBMs. The RVP confirms the booking (base points count), then after the meeting marks it done and ticks the value story for the bonus points."],
-      ["📈", "Climb the levels", "Higher-seniority meetings score more — a held VP/CTO meeting with a value story and next step is worth the max 8."],
-      ["👕", "Win your jersey", `The ${WEEKLY_WINNER_COUNT} weekly winners pick a World Championship jersey — any country, with the Cursor logo.`],
+    const sync = db.calendarSync || {};
+    const lastSync = sync.lastRunAt
+      ? new Date(sync.lastRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+      : "not yet run";
+    const autoCount = db.entries.filter((e) => e.source === "calendar").length;
+    const features = [
+      ["🗓️", "Auto-tracked from calendars", "New Business Meetings are detected automatically from the team's Google Calendars — nothing to log by hand."],
+      ["📈", "Progress, not a contest", "See how pipeline generation is trending across EMEA — volumes, seniority mix and held rates, not a race for prizes."],
+      ["⚡", "Zero admin", "No logging, no approvals, no scoring. Meetings flow in from calendars and update the dashboard on their own."],
+      ["🎯", "Every NBM counts equally", "An NBM is an NBM — the dashboard counts meetings and how many were held, without points or weighting."],
+      ["🌍", "Whole-team view", "Break progress down by region, team and seniority, over week, month, quarter or all-time."],
+      ["👥", "Per-AE profiles", "Each AE has a profile showing their NBM activity and held rate at a glance."],
     ];
 
     return `
       <div class="hero">
-        <div class="ball">⚽</div>
-        <div class="eyebrow">World Championship PG 2026</div>
-        <h1>PG Spotlight</h1>
+        <div class="ball">📊</div>
+        <div class="eyebrow">EMEA Pipeline Generation</div>
+        <h1>PG Dashboard</h1>
         <p class="lead">
-          A six-week EMEA-wide sales championship to put pipeline generation in the spotlight.
-          Run high-value New Business Meetings, tell the value story, and bank points to climb the
-          leaderboard — tournament style. Every week, the top performers take home a jersey.
+          An always-on view of New Business Meeting progress across EMEA. Meetings are tracked
+          automatically from the team's calendars and rolled up into clear insights — by region,
+          team and seniority, over week, month, quarter or all-time.
         </p>
         <div class="facts">
-          <span class="chip">🚀 Kick-off <b>${kickoff}</b></span>
-          <span class="chip">🌍 <b>${activeAEsForWeek(state.weekKey).length}</b> AEs onboard this week</span>
-          <span class="chip">🏆 <b>${WEEKLY_WINNER_COUNT}</b> weekly winners</span>
-          <span class="chip">📊 Max <b>8</b> pts per NBM</span>
+          <span class="chip">🌍 <b>${db.aes.filter((a) => a.active !== false).length}</b> AEs on the board</span>
+          <span class="chip">🗓️ <b>${autoCount}</b> NBMs tracked</span>
+          <span class="chip">🔄 Last sync <b>${lastSync}</b></span>
+          <span class="chip">⚡ <b>0</b> manual steps</span>
         </div>
         <div class="cta btn-row">
-          <button class="btn primary" data-tab="log">Log an NBM</button>
-          <button class="btn" data-tab="leaderboard">View leaderboard</button>
-          <a class="btn ghost" href="${CHEATSHEET_URL}" target="_blank" rel="noopener">Cheatsheet stories ↗</a>
+          <button class="btn primary" data-tab="leaderboard">View insights</button>
+          <button class="btn" data-tab="roster">Team</button>
+          <button class="btn ghost" data-tab="calendar">Calendar sync</button>
         </div>
       </div>
 
-      <div class="section-head"><div><h2>Rules of engagement</h2><p>What the championship rewards</p></div></div>
+      <div class="section-head"><div><h2>How it works</h2><p>A fully automatic insight into NBM progress</p></div></div>
       <div class="rules-grid">
-        ${rules.map((r) => `<div class="rule"><div class="ic">${r[0]}</div><b>${r[1]}</b><p>${esc(r[2])}</p></div>`).join("")}
+        ${features.map((r) => `<div class="rule"><div class="ic">${r[0]}</div><b>${r[1]}</b><p>${esc(r[2])}</p></div>`).join("")}
       </div>
 
       <div class="two-col">
         <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">✍️ For Account Executives</h2>
+          <h2 style="font-size:16px;margin-top:0">🗓️ How meetings are tracked</h2>
           <div class="step-list">
-            <div class="step-row"><span class="n">1</span><div><b>Book your NBMs</b><p>Target VP/CTO, Director/Head of, and Engineer personas — seniority scores higher.</p></div></div>
-            <div class="step-row"><span class="n">2</span><div><b>Bring the value story</b><p>Use the Value Pyramid / POV and lock in a next step in the meeting — your RVP ticks these afterwards for bonus points.</p></div></div>
-            <div class="step-row"><span class="n">3</span><div><b>Book it before Friday</b><p>Record each meeting in <b>Log NBM</b>. Base points count as soon as your RVP confirms the booking.</p></div></div>
+            <div class="step-row"><span class="n">1</span><div><b>Calendars are scanned</b><p>A scheduled job reads each AE's Google Calendar and finds external New Business Meetings.</p></div></div>
+            <div class="step-row"><span class="n">2</span><div><b>NBMs are captured</b><p>Seniority is inferred from the attendee, and held / next-step outcomes are detected automatically.</p></div></div>
+            <div class="step-row"><span class="n">3</span><div><b>Insights update</b><p>Every meeting flows straight into the dashboard — no logging and no approvals.</p></div></div>
           </div>
         </div>
         <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">✅ For RVPs / Managers</h2>
+          <h2 style="font-size:16px;margin-top:0">📈 What you can see</h2>
           <div class="step-list">
-            <div class="step-row"><span class="n">1</span><div><b>Confirm bookings</b><p>Open <b>Verify</b> and confirm each booked NBM — base points start counting immediately.</p></div></div>
-            <div class="step-row"><span class="n">2</span><div><b>Mark done & score the outcome</b><p>After the meeting, mark it <b>Done</b> (+2 held) and tick Value Pyramid (+2) and Next step (+1).</p></div></div>
-            <div class="step-row"><span class="n">3</span><div><b>Present at 16:00</b><p>Share the standings at the EMEA wrap-up; two AEs present success stories.</p></div></div>
+            <div class="step-row"><span class="n">1</span><div><b>Team momentum</b><p>NBM volume and held rate by week, month, quarter or all-time across the whole region.</p></div></div>
+            <div class="step-row"><span class="n">2</span><div><b>Seniority & region mix</b><p>Where the pipeline is coming from — VP/CTO vs Director vs Engineer, and which regions are active.</p></div></div>
+            <div class="step-row"><span class="n">3</span><div><b>Per-AE progress</b><p>Each AE's activity and held rate, to spot who needs support — not to crown a winner.</p></div></div>
           </div>
         </div>
       </div>
 
       <div class="card card-pad" style="margin-top:20px">
-        <h2 style="font-size:16px;margin-top:0">🗓️ Weekly cadence</h2>
-        <div class="cadence-grid">
-          <div class="cad"><div class="day">Monday</div><div class="time">09:00</div><div class="desc">Kick-off call — EMEA wide</div></div>
-          <div class="cad"><div class="day">Monday</div><div class="time">17:00</div><div class="desc">Wrap-up call — local</div></div>
-          <div class="cad"><div class="day">Friday</div><div class="time">16:00</div><div class="desc">EMEA wrap-up — 2 AEs present success stories</div></div>
-        </div>
-        <p style="color:var(--muted);font-size:13px;margin:14px 0 0">
-          Full scoring rubric, prize details and data tools live in the <button class="btn sm ghost" data-tab="program">Playbook</button>.
+        <h2 style="font-size:16px;margin-top:0">📋 What counts as an NBM</h2>
+        <p style="color:var(--muted);font-size:13.5px;margin:0 0 6px">
+          An NBM is an NBM — there's no scoring. A meeting counts when it has an external prospect on the
+          invite; we also track whether it was <b>held</b> and whether a <b>next step</b> was booked. Details are in the
+          <button class="btn sm ghost" data-tab="program">Playbook</button>.
         </p>
       </div>`;
   }
 
-  /* ---------- Leaderboard ---------- */
-  function renderLeaderboard() {
-    const rows = leaderboard(state.lbScope, state.weekKey);
-    const ranked = rows.filter((r) => r.points > 0);
-    const max = ranked.length ? ranked[0].points : 1;
-    const scopeLabel = state.lbScope === "week" ? `Week ${weekNumber(state.weekKey)}` : "Full season";
-
-    const podium = ranked.slice(0, 3);
-    const podiumOrder = [podium[1], podium[0], podium[2]]; // 2nd, 1st, 3rd
-    const medals = { 0: "🥇", 1: "🥈", 2: "🥉" };
-
-    const podiumHTML = ranked.length
-      ? `<div class="podium">
-          ${podiumOrder
-            .map((r, idx) => {
-              if (!r) return `<div></div>`;
-              const rank = podium.indexOf(r);
-              const c = countryByCode(r.ae.country);
-              return `
-                <div class="podium-card p${rank + 1}">
-                  <div class="podium-rank">${rank + 1}</div>
-                  <div class="medal">${medals[rank]}</div>
-                  <div class="flag">${c.flag}</div>
-                  <div class="nm">${esc(r.ae.name)}</div>
-                  <div class="rg">${esc(r.ae.region)}</div>
-                  <div class="pts">${r.points}<small> pts</small></div>
-                </div>`;
-            })
-            .join("")}
-        </div>`
+  /* ---------- Insights ---------- */
+  function scopeLabelFor(scope, ref) {
+    if (scope === "week") return `Week ${weekNumber(ref)} · ${weekLabel(ref)}`;
+    if (scope === "all") return "All time";
+    return periodRange(scope, ref).label;
+  }
+  // Counting NBM entries within the selected scope (week/month/quarter/all).
+  function scopeEntries(scope, ref) {
+    let pool;
+    if (scope === "week") {
+      pool = entriesForWeek(ref);
+    } else {
+      const { start, end } = periodRange(scope, ref);
+      pool = db.entries.filter((e) => entryInRange(e, start, end));
+    }
+    return pool.filter(countsTowardStandings);
+  }
+  function barRow(label, value, max, hint) {
+    const pct = max ? Math.max(3, Math.round((value / max) * 100)) : 0;
+    return `
+      <div class="ins-bar">
+        <div class="ins-bar-label">${label}${hint ? ` <span class="rg">${hint}</span>` : ""}</div>
+        <div class="bar"><span style="width:${pct}%"></span></div>
+        <div class="ins-bar-val">${value}</div>
+      </div>`;
+  }
+  function renderInsights() {
+    const scope = state.lbScope;
+    const scopeLabel = scopeLabelFor(scope, state.weekKey);
+    const scopes = [["week", "This week"], ["month", "Month"], ["quarter", "Quarter"], ["all", "All-time"]];
+    const canPage = scope === "month" || scope === "quarter";
+    const pager = canPage
+      ? `<div class="week-pill" style="margin-top:10px">
+           <button data-action="period-prev" title="Previous ${scope}">‹</button>
+           <div class="label">${scopeLabel}</div>
+           <button data-action="period-next" title="Next ${scope}">›</button>
+         </div>`
       : "";
 
-    const tableRows = ranked.length
-      ? ranked
-          .map((r, i) => {
-            const c = countryByCode(r.ae.country);
-            const pct = Math.max(6, Math.round((r.points / max) * 100));
-            return `
-              <tr>
-                <td class="rankcell ${i < 3 ? "top" : ""}">${i + 1}</td>
-                <td>
-                  <div class="ae">
-                    <span class="flag">${c.flag}</span>
-                    <span><span class="nm">${esc(r.ae.name)}</span><br><span class="rg">${esc(r.ae.region)} · ${esc(r.ae.rvp)}</span></span>
-                  </div>
-                </td>
-                <td class="num">${r.nbms}</td>
-                <td class="num">${r.held}</td>
-                <td>
-                  <div class="ptscell">${r.points}</div>
-                  <div class="bar"><span style="width:${pct}%"></span></div>
-                </td>
-              </tr>`;
-          })
-          .join("")
-      : `<tr><td colspan="5"><div class="empty"><div class="ico">⚽</div><h3>No points logged yet</h3><p>Log NBMs to populate the ${scopeLabel.toLowerCase()} board.</p></div></td></tr>`;
+    const pool = scopeEntries(scope, state.weekKey);
+    const total = pool.length;
+    const held = pool.filter((e) => e.held).length;
+    const nextStep = pool.filter((e) => e.calendarised).length;
+    const heldRate = total ? Math.round((held / total) * 100) : 0;
+    const activeAeIds = new Set(pool.map((e) => e.aeId));
+
+    const kpis = `
+      <div class="stat-strip">
+        <div class="stat"><div class="k">NBMs</div><div class="v">${total}</div></div>
+        <div class="stat"><div class="k">Held</div><div class="v">${held} <small>· ${heldRate}%</small></div></div>
+        <div class="stat"><div class="k">Next step booked</div><div class="v">${nextStep}</div></div>
+        <div class="stat"><div class="k">AEs active</div><div class="v">${activeAeIds.size}</div></div>
+      </div>`;
+
+    // Breakdown by seniority level.
+    const levelKeys = Object.keys(LEVELS);
+    const byLevel = levelKeys.map((l) => ({ l, n: pool.filter((e) => e.level === l).length }));
+    const levelMax = Math.max(1, ...byLevel.map((x) => x.n));
+    const levelCard = `
+      <div class="card card-pad">
+        <h2 style="font-size:16px;margin-top:0">By seniority</h2>
+        ${byLevel.map((x) => barRow(LEVELS[x.l].short, x.n, levelMax)).join("") || "<p class='meta'>No data.</p>"}
+      </div>`;
+
+    // Breakdown by region.
+    const regionCounts = {};
+    pool.forEach((e) => {
+      const ae = db.aes.find((a) => a.id === e.aeId);
+      const r = (ae && ae.region) || "—";
+      regionCounts[r] = (regionCounts[r] || 0) + 1;
+    });
+    const regionRows = Object.entries(regionCounts).sort((a, b) => b[1] - a[1]);
+    const regionMax = Math.max(1, ...regionRows.map((x) => x[1]));
+    const regionCard = `
+      <div class="card card-pad">
+        <h2 style="font-size:16px;margin-top:0">By region</h2>
+        ${regionRows.map(([r, n]) => barRow(esc(r), n, regionMax)).join("") || "<p class='meta'>No data.</p>"}
+      </div>`;
+
+    // Per-AE progress (ordered by activity — a progress view, not a contest).
+    const rows = leaderboard(scope, state.weekKey).filter((r) => r.nbms > 0)
+      .sort((a, b) => b.nbms - a.nbms || b.held - a.held || a.ae.name.localeCompare(b.ae.name));
+    const maxN = rows.length ? rows[0].nbms : 1;
+    const tableRows = rows.length
+      ? rows.map((r) => {
+          const c = countryByCode(r.ae.country);
+          const pct = Math.max(6, Math.round((r.nbms / maxN) * 100));
+          const hr = r.nbms ? Math.round((r.held / r.nbms) * 100) : 0;
+          return `
+            <tr>
+              <td>
+                <div class="ae">
+                  <span class="flag">${c.flag}</span>
+                  <span><span class="nm">${esc(r.ae.name)}</span><br><span class="rg">${esc(r.ae.region)}${r.ae.rvp ? " · " + esc(r.ae.rvp) : ""}</span></span>
+                </div>
+              </td>
+              <td class="num">${r.nbms}</td>
+              <td class="num">${r.held}</td>
+              <td class="num">${hr}%</td>
+              <td><div class="bar"><span style="width:${pct}%"></span></div></td>
+            </tr>`;
+        }).join("")
+      : `<tr><td colspan="5"><div class="empty"><div class="ico">🗓️</div><h3>No NBMs ${scope === "all" ? "yet" : "in this period"}</h3><p>Meetings appear here automatically once the calendar sync runs.</p></div></td></tr>`;
 
     return `
       <div class="section-head">
         <div>
-          <h2>Leaderboard</h2>
-          <p>Tournament-style standings · ${scopeLabel} · top ${WEEKLY_WINNER_COUNT} take a jersey</p>
+          <h2>Insights</h2>
+          <p>NBM progress across EMEA · ${scopeLabel}</p>
+          ${pager}
         </div>
         <div class="seg">
-          <button class="${state.lbScope === "week" ? "active" : ""}" data-scope="week">This week</button>
-          <button class="${state.lbScope === "season" ? "active" : ""}" data-scope="season">Season</button>
+          ${scopes.map(([s, l]) => `<button class="${scope === s ? "active" : ""}" data-scope="${s}">${l}</button>`).join("")}
         </div>
       </div>
-      ${podiumHTML}
+      ${kpis}
+      <div class="two-col" style="margin-top:16px">
+        ${levelCard}
+        ${regionCard}
+      </div>
+      <div class="section-head" style="margin-top:20px"><div><h2 style="font-size:16px">Per-AE progress</h2><p>Ordered by activity — to see momentum and who may need support</p></div></div>
       <div class="card">
         <table class="lb">
           <thead>
             <tr>
-              <th>#</th><th>Account Executive</th>
-              <th class="num">NBMs</th><th class="num">Held</th><th>Points</th>
+              <th>Account Executive</th>
+              <th class="num">NBMs</th><th class="num">Held</th><th class="num" title="Share of NBMs held">Held&nbsp;%</th><th>Activity</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
@@ -628,146 +759,63 @@
       </div>`;
   }
 
-  /* ---------- Roster / Panini cards ---------- */
+  /* ---------- Team ---------- */
   function renderRoster() {
     if (!db.aes.length) {
       return `
-        <div class="section-head"><div><h2>Squad</h2><p>Your competing Account Executives</p></div>
+        <div class="section-head"><div><h2>Team</h2><p>Account Executives on the board</p></div>
           <button class="btn primary" data-action="add-ae">+ Add AE</button></div>
-        <div class="empty"><div class="ico">🃏</div><h3>No AEs yet</h3><p>Add your roster to start the championship.</p></div>`;
+        <div class="empty"><div class="ico">👥</div><h3>No AEs yet</h3><p>Add the team so their calendar NBMs can be tracked.</p></div>`;
     }
+    // Per-AE NBM count for the current calendar month (a recent-momentum signal).
+    const monthKey = toISO(mondayOf(new Date()));
+    const { start, end } = periodRange("month", monthKey);
+    const monthCount = (aeId) =>
+      db.entries.filter((e) => e.aeId === aeId && countsTowardStandings(e) && entryInRange(e, start, end)).length;
+
     const sorted = [...db.aes].sort((a, b) => {
-      const activeA = isActiveInWeek(a, state.weekKey);
-      const activeB = isActiveInWeek(b, state.weekKey);
+      const activeA = a.active !== false, activeB = b.active !== false;
       if (activeA !== activeB) return activeA ? -1 : 1;
-      return aeSeasonStats(b.id).points - aeSeasonStats(a.id).points;
+      return aeSeasonStats(b.id).nbms - aeSeasonStats(a.id).nbms;
     });
     const cards = sorted
       .map((ae, idx) => {
         const s = aeSeasonStats(ae.id);
         const c = countryByCode(ae.country);
-        const active = isActiveInWeek(ae, state.weekKey);
+        const active = ae.active !== false;
         const initials = ae.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-        const rank = idx + 1;
-        const card = paniniRating(s, rank);
+        const heldRate = s.nbms ? Math.round((s.held / s.nbms) * 100) : 0;
         return `
-          <div class="panini ${card.cls}">
+          <div class="panini ${cardBand(s)}">
             <div class="panini-inner">
               <div class="top-row">
-                <div class="ovr">${card.ovr}<small>OVR</small></div>
+                <div class="ovr">${s.nbms}<small>NBMs</small></div>
                 <div class="flag">${c.flag}</div>
               </div>
               <div class="avatar"><span class="initials">${esc(initials)}</span></div>
-              <div class="card-tier">${card.label} · #${rank}</div>
+              <div class="card-tier">${ae.rvp ? esc(ae.rvp) : "—"}</div>
               <div class="pname">${esc(ae.name)}</div>
               <div class="prole">${esc(ae.region)} · ${esc(c.name)}</div>
-              <div class="joinline ${active ? "active" : "future"}">${active ? "Onboarded" : "Joins"} · ${formatStartDate(ae.startDate)}</div>
+              <div class="joinline ${active ? "active" : "future"}">${active ? "Active" : "Joins"} · ${formatStartDate(ae.startDate)}${ae.calendarEmail ? "" : " · no calendar"}</div>
               <div class="pstats">
-                <div class="pstat"><b>${s.points}</b><span>Points</span></div>
-                <div class="pstat"><b>${s.nbms}</b><span>NBMs</span></div>
+                <div class="pstat"><b>${monthCount(ae.id)}</b><span>This month</span></div>
                 <div class="pstat"><b>${s.held}</b><span>Held</span></div>
+                <div class="pstat"><b>${heldRate}%</b><span>Held rate</span></div>
               </div>
               <div class="card-actions">
                 <button data-action="edit-ae" data-id="${ae.id}">Edit</button>
-                <button data-action="log-for" data-id="${ae.id}">Log NBM</button>
               </div>
             </div>
           </div>`;
       })
       .join("");
+    const missing = db.aes.filter((a) => a.active !== false && !a.calendarEmail).length;
     return `
       <div class="section-head">
-        <div><h2>Squad — Panini Wall</h2><p>${db.aes.length} Account Executives · OVR rating grows with season points</p></div>
+        <div><h2>Team</h2><p>${db.aes.length} Account Executives · NBM activity from calendar tracking${missing ? ` · <span style="color:var(--muted)">${missing} missing a calendar</span>` : ""}</p></div>
         <button class="btn primary" data-action="add-ae">+ Add AE</button>
       </div>
       <div class="grid-cards">${cards}</div>`;
-  }
-
-  /* ---------- Log NBM ---------- */
-  function renderLog() {
-    const d = state.draft;
-    const activeAEs = activeAEsForWeek(state.weekKey);
-    const aeOptions = activeAEs
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((ae) => `<option value="${ae.id}" ${d.aeId === ae.id ? "selected" : ""}>${esc(ae.name)} — ${esc(ae.region)}</option>`)
-      .join("");
-    const levelOptions = Object.keys(LEVELS)
-      .map((l) => `<option value="${l}" ${d.level === l ? "selected" : ""}>${LEVELS[l].short} (base ${LEVELS[l].base})</option>`)
-      .join("");
-
-    const recent = entriesForWeek(state.weekKey)
-      .slice()
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
-
-    return `
-      <div class="section-head">
-        <div><h2>Book a New Business Meeting</h2><p>Week ${weekNumber(state.weekKey)} · ${weekLabel(state.weekKey)} — book it before Fri 12:00; your RVP confirms it and adds the outcome after the meeting</p></div>
-      </div>
-      <div class="two-col">
-        <div class="card card-pad">
-          <form id="nbm-form">
-            <div class="form-grid">
-              <div class="field">
-                <label>Account Executive</label>
-                <select data-field="aeId" required>
-                  <option value="">Select AE…</option>${aeOptions}
-                </select>
-                <div class="meta" id="ae-manager-hint" style="margin-top:6px">${d.aeId && managerOf(d.aeId) ? "Confirmed by: " + esc(managerOf(d.aeId)) : ""}</div>
-                ${activeAEs.length ? "" : `<p style="color:var(--muted);font-size:12px;margin:6px 0 0">No AEs have joined by this week yet.</p>`}
-              </div>
-              <div class="field">
-                <label>Account / Prospect</label>
-                <input type="text" data-field="account" value="${esc(d.account)}" placeholder="e.g. Helios Bank" />
-              </div>
-              <div class="field">
-                <label>NBM level</label>
-                <select data-field="level">${levelOptions}</select>
-              </div>
-              <div class="field">
-                <label>Meeting date</label>
-                <input type="date" data-field="date" value="${esc(d.date)}" />
-              </div>
-              <div class="field full">
-                <div class="meta" style="background:rgba(7,30,71,.05);border-radius:10px;padding:10px 12px">
-                  Booking locks in the <b>base points</b> once your RVP confirms it.
-                  After the meeting, your RVP marks it <b>Done</b> (+2 held) and ticks
-                  <b>Value Pyramid</b> (+2) and <b>Next step</b> (+1) for the full score.
-                </div>
-              </div>
-              <div class="field full">
-                <label>Notes (optional)</label>
-                <textarea data-field="note" placeholder="Context, value story, next step…">${esc(d.note)}</textarea>
-              </div>
-            </div>
-            <div class="btn-row" style="margin-top:16px">
-              <button type="submit" class="btn primary">Book NBM</button>
-              <button type="button" class="btn ghost" data-action="reset-draft">Clear</button>
-            </div>
-          </form>
-        </div>
-        <div>
-          <div class="points-preview" style="margin-bottom:16px">
-            <div>
-              <div id="preview-pts" class="big">${draftPoints(d)}</div>
-              <div class="lbl">base pts on confirm · up to ${LEVELS[d.level].max} when done</div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="section-head" style="padding:14px 16px 0;margin:0">
-              <div><h2 style="font-size:15px">This week’s log</h2></div>
-              ${recent.length ? `<button class="btn sm ghost" data-action="export-week">Export CSV</button>` : ""}
-            </div>
-            <div style="padding:6px 4px 8px">
-              ${
-                recent.length
-                  ? recent.map(renderEntryRow).join("")
-                  : `<div class="empty"><div class="ico">📭</div><p>No NBMs logged this week yet.</p></div>`
-              }
-            </div>
-          </div>
-        </div>
-      </div>`;
   }
 
   function statusBadge(e) {
@@ -780,13 +828,20 @@
     const [cls, label] = map[e.status] || map.booked;
     return `<span class="badge ${cls}">${label}</span>`;
   }
+  // A small badge marking how an NBM entered the system.
+  function sourceBadge(e) {
+    if (e.source === "calendar") {
+      const who = e.attendeeTitle || e.attendeeName || e.attendeeEmail;
+      return `<span class="badge auto" title="Auto-tracked from calendar${who ? " · " + esc(who) : ""}">🗓️ Auto</span>`;
+    }
+    return "";
+  }
 
   function renderEntryRow(e) {
     const ae = db.aes.find((a) => a.id === e.aeId);
     const c = countryByCode(ae ? ae.country : "");
     const lvl = LEVELS[e.level] || { cls: "", short: e.level };
     const tags = [
-      e.valuePyramid ? "POV" : null,
       e.held ? "Held" : null,
       e.calendarised ? "Next step" : null,
     ].filter(Boolean).join(" · ");
@@ -794,203 +849,181 @@
       <div class="entry">
         <span class="flag">${c.flag}</span>
         <div class="main">
-          <b>${esc(ae ? ae.name : "Unknown")}</b> <span class="badge ${lvl.cls}">${lvl.short}</span> ${statusBadge(e)}
+          <b>${esc(ae ? ae.name : "Unknown")}</b> <span class="badge ${lvl.cls}">${lvl.short}</span> ${statusBadge(e)} ${sourceBadge(e)}
           <div class="meta">${esc(e.account || "—")}${tags ? " · " + tags : ""}</div>
         </div>
-        <div class="epts">${entryPoints(e)}</div>
-        <button class="del" data-action="del-entry" data-id="${e.id}" title="Delete">✕</button>
       </div>`;
   }
 
-  /* ---------- Manager verification queue ---------- */
-  function managerOf(aeId) {
-    const ae = db.aes.find((a) => a.id === aeId);
-    return (ae && ae.rvp) || "";
+  /* ---------- Calendar Sync ---------- */
+  function calendarConfig() {
+    const cfg = (typeof window !== "undefined" && window.PG_CONFIG) || {};
+    const url = String(cfg.supabaseUrl || "").replace(/\/+$/, "");
+    const key = String(cfg.supabasePublishableKey || cfg.supabaseAnonKey || "");
+    return { url, key, ready: !!(url && key) };
   }
-  function renderVerify() {
-    const managers = [...new Set(db.aes.map((a) => a.rvp).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    const selMgr = state.verifyMgr || "";
-    let weekEntries = entriesForWeek(state.weekKey).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
-    if (selMgr) weekEntries = weekEntries.filter((e) => managerOf(e.aeId) === selMgr);
-    const booked = weekEntries.filter((e) => e.status === "booked");
-    const confirmed = weekEntries.filter((e) => e.status === "confirmed");
-    const done = weekEntries.filter((e) => e.status === "done");
-    const rejected = weekEntries.filter((e) => e.status === "rejected");
-    const mgr = (db.settings && db.settings.managerName) || "";
-    const mgrOptions =
-      `<option value="">All managers</option>` +
-      managers.map((m) => `<option value="${esc(m)}" ${selMgr === m ? "selected" : ""}>${esc(m)}</option>`).join("");
-
-    const group = (title, list, kind, emptyMsg) => {
-      if (!list.length && kind !== "booked") return "";
-      return `
-        <div class="verify-group">
-          <div class="gh">${title} <span class="chip"><b>${list.length}</b></span></div>
-          <div class="card">
-            ${
-              list.length
-                ? list.map((e) => renderVerifyRow(e, kind)).join("")
-                : `<div class="empty"><div class="ico">🎉</div><p>${esc(emptyMsg || `No bookings awaiting confirmation for Week ${weekNumber(state.weekKey)}.`)}</p></div>`
-            }
-          </div>
-        </div>`;
-    };
-
-    return `
-      <div class="section-head">
-        <div><h2>Manager Verification</h2>
-        <p>Week ${weekNumber(state.weekKey)} · ${weekLabel(state.weekKey)} — confirm bookings (base points), then mark them done and tick the value story</p></div>
-        <div class="btn-row">
-          <select data-field="verifyMgr" style="min-width:170px">${mgrOptions}</select>
-          ${selMgr ? `<button class="btn ghost sm" data-action="copy-mgr-link">Copy ${esc(selMgr)}'s link</button>` : ""}
-          <input type="text" data-field="managerName" value="${esc(mgr)}" placeholder="Your name (RVP / manager)" style="min-width:200px" />
-          ${booked.length ? `<button class="btn primary sm" data-action="confirm-all">Confirm all (${booked.length})</button>` : ""}
-        </div>
-      </div>
-      ${group(`⏳ Booked — confirm to start scoring`, booked, "booked")}
-      ${group(`📅 Confirmed — base points counting`, confirmed, "confirmed")}
-      ${group(`✓ Done — full score counting`, done, "done")}
-      ${group(`✕ Rejected`, rejected, "rejected")}`;
+  // Pull the latest sync bookkeeping row so the UI can show "last synced".
+  function fetchCalendarSyncState() {
+    const { url, key, ready } = calendarConfig();
+    if (!ready) return Promise.resolve(null);
+    return fetch(url + "/rest/v1/calendar_sync_state?id=eq.global&select=*", {
+      headers: { apikey: key, Authorization: "Bearer " + key },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => {
+        const r = (rows && rows[0]) || null;
+        if (r) {
+          db.calendarSync = {
+            lastRunAt: r.last_run_at, lastStatus: r.last_status,
+            eventsScanned: r.events_scanned, nbmsCreated: r.nbms_created,
+            nbmsUpdated: r.nbms_updated, windowStart: r.window_start,
+            windowEnd: r.window_end, message: r.message,
+          };
+          save();
+        }
+        return db.calendarSync;
+      })
+      .catch(() => null);
+  }
+  // Trigger the scheduled edge function on demand ("Run sync now").
+  function runCalendarSync() {
+    const { url, key, ready } = calendarConfig();
+    if (!ready) {
+      toast("Configure Supabase in config.js first");
+      return;
+    }
+    toast("Calendar sync started…");
+    fetch(url + "/functions/v1/calendar-sync", {
+      method: "POST",
+      headers: { apikey: key, Authorization: "Bearer " + key, "Content-Type": "application/json" },
+      body: JSON.stringify({ trigger: "manual" }),
+    })
+      .then((r) => r.json().catch(() => ({})).then((body) => ({ ok: r.ok, status: r.status, body })))
+      .then((res) => {
+        if (!res.ok) {
+          const msg = (res.body && (res.body.error || res.body.message)) || ("HTTP " + res.status);
+          toast("Sync failed: " + msg);
+        } else {
+          const created = (res.body && res.body.nbmsCreated) || 0;
+          toast(`Sync done · ${created} new NBM${created === 1 ? "" : "s"}`);
+        }
+        return fetchCalendarSyncState();
+      })
+      .then(() => render())
+      .catch((err) => {
+        // The function may not be deployed yet — guide the user to the docs.
+        toast("Sync unavailable — see Calendar Sync setup");
+      });
   }
 
-  function renderVerifyRow(e, kind) {
-    const ae = db.aes.find((a) => a.id === e.aeId);
-    const c = countryByCode(ae ? ae.country : "");
-    const lvl = LEVELS[e.level] || { cls: "", short: e.level };
-    // Outcome state is shown via the toggle buttons below, so keep the meta line
-    // to just the account here.
-    const tags = "";
-    let acts = "";
-    if (kind === "booked") {
-      acts = `
-        <button class="btn primary sm" data-action="confirm-entry" data-id="${e.id}">Confirm</button>
-        <button class="btn danger sm" data-action="reject-entry" data-id="${e.id}">Reject</button>`;
-    } else if (kind === "confirmed") {
-      acts = `
-        <button class="btn primary sm" data-action="mark-done" data-id="${e.id}">Mark done</button>
-        <button class="btn ghost sm" data-action="revert-booked" data-id="${e.id}">Revert</button>`;
-    } else if (kind === "done") {
-      acts = `<button class="btn ghost sm" data-action="revert-confirmed" data-id="${e.id}">Reopen</button>`;
-    } else {
-      acts = `<button class="btn ghost sm" data-action="revert-booked" data-id="${e.id}">Restore</button>`;
-    }
+  function renderCalendar() {
+    const s = db.calendarSync || {};
+    const mapped = db.aes.filter((a) => a.calendarEmail && a.active !== false);
+    const missing = db.aes.filter((a) => !a.calendarEmail && a.active !== false);
+    const auto = db.entries.filter((e) => e.source === "calendar");
+    const recent = auto.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 12);
+    const { ready } = calendarConfig();
 
-    // After the meeting, the leader ticks the value-story bonuses (live points).
-    let outcome = "";
-    if (kind === "confirmed" || kind === "done") {
-      const toggle = (comp, label, pts) =>
-        `<button class="btn sm ${e[comp] ? "primary" : "ghost"}" data-action="toggle-comp" data-id="${e.id}" data-comp="${comp}">${e[comp] ? "✓ " : ""}${label} +${pts}</button>`;
-      const heldChip = kind === "done"
-        ? `<span class="badge verified" title="Auto-added when marked done">✓ Held +2</span>`
-        : "";
-      outcome = `
-        <div class="outcome-row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
-          ${heldChip}
-          ${toggle("valuePyramid", "Value Pyramid", 2)}
-          ${toggle("calendarised", "Next step", 1)}
-        </div>`;
-    }
+    const lastRun = s.lastRunAt
+      ? new Date(s.lastRunAt).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+      : "Never";
+    const statusCls = s.lastStatus === "ok" ? "verified" : s.lastStatus === "error" ? "rejected" : "pending";
 
-    const stamp =
-      (e.status === "confirmed" || e.status === "done" || e.status === "rejected") && e.verifiedBy
-        ? `<div class="vstamp">${e.status === "rejected" ? "Rejected" : e.status === "done" ? "Done" : "Confirmed"} by ${esc(e.verifiedBy)}</div>`
-        : "";
-    return `
-      <div class="entry">
-        <span class="flag">${c.flag}</span>
-        <div class="main">
-          <b>${esc(ae ? ae.name : "Unknown")}</b> <span class="badge ${lvl.cls}">${lvl.short}</span>
-          <div class="meta">${esc(e.account || "—")}${tags ? " · " + tags : ""}</div>
-          ${ae && ae.rvp ? `<div class="meta">Manager: ${esc(ae.rvp)}</div>` : ""}
-          ${formatLoggedAt(e.createdAt) ? `<div class="vstamp">${formatLoggedAt(e.createdAt)}</div>` : ""}
-          ${stamp}
-          ${outcome}
+    const statusCard = `
+      <div class="card card-pad">
+        <div class="section-head" style="margin:0 0 12px">
+          <div><h2 style="font-size:16px;margin:0">🗓️ Calendar sync status</h2>
+          <p style="margin:2px 0 0">Auto-detects NBMs from the team's Google Calendars</p></div>
+          <button class="btn primary sm" data-action="run-calendar-sync">Run sync now</button>
         </div>
-        <div class="epts">${entryPoints(e)}</div>
-        <div class="acts">${acts}</div>
+        <div class="stat-strip" style="margin:0">
+          <div class="stat"><div class="k">Last run</div><div class="v" style="font-size:15px">${lastRun} <span class="badge ${statusCls}">${esc(s.lastStatus || "idle")}</span></div></div>
+          <div class="stat"><div class="k">Events scanned</div><div class="v">${s.eventsScanned || 0}</div></div>
+          <div class="stat"><div class="k">NBMs created</div><div class="v">${s.nbmsCreated || 0}</div></div>
+          <div class="stat"><div class="k">Auto-tracked total</div><div class="v">${auto.length}</div></div>
+        </div>
+        ${s.message ? `<p class="meta" style="margin:12px 0 0">${esc(s.message)}</p>` : ""}
+        ${!ready ? `<p class="meta" style="margin:12px 0 0;color:var(--rejected,#c0392b)">⚠️ Supabase isn't configured in <b>config.js</b>, so sync can't run yet.</p>` : ""}
       </div>`;
-  }
 
-  /* ---------- Weekly winners + jerseys ---------- */
-  function renderWinners() {
-    const rows = leaderboard("week", state.weekKey).filter((r) => r.points > 0);
-    const winners = rows.slice(0, WEEKLY_WINNER_COUNT);
-    const picks = db.jerseys[state.weekKey] || {};
+    const coverageCard = `
+      <div class="card card-pad">
+        <h2 style="font-size:16px;margin-top:0">📇 Calendar coverage</h2>
+        <p class="meta" style="margin:0 0 10px"><b>${mapped.length}</b> of ${mapped.length + missing.length} active AEs have a calendar mapped. With roster discovery enabled this is filled in automatically.</p>
+        ${
+          missing.length
+            ? `<div class="meta" style="margin-bottom:6px">Missing a calendar email (won't be auto-tracked):</div>
+               <div class="chip-row">${missing.map((a) => `<span class="chip">${countryByCode(a.country).flag} ${esc(a.name)}</span>`).join("")}</div>
+               <p class="meta" style="margin:10px 0 0">Add each AE's work email in <button class="btn sm ghost" data-tab="roster">Team → Edit</button> so the sync knows which calendar to read.</p>`
+            : `<p class="meta" style="margin:0">✅ Every active AE has a calendar mapped.</p>`
+        }
+      </div>`;
 
-    const body = winners.length
-      ? `<div class="winners-grid">
-          ${winners
-            .map((r, i) => {
-              const pickedCode = picks[r.ae.id] || r.ae.country;
-              const jc = countryByCode(pickedCode);
-              const opts = COUNTRIES.map(
-                (c) => `<option value="${c.code}" ${c.code === pickedCode ? "selected" : ""}>${c.flag} ${esc(c.name)}</option>`
-              ).join("");
-              return `
-                <div class="jersey">
-                  <div class="rankbadge">#${i + 1}</div>
-                  <div class="shirt">${shirtSVG(jc.color)}<div class="cursor-logo">CURSOR</div></div>
-                  <div class="wname">${esc(r.ae.name)}</div>
-                  <div class="wpts">${r.points} <small>pts</small></div>
-                  <select data-action="pick-jersey" data-id="${r.ae.id}">${opts}</select>
-                </div>`;
-            })
-            .join("")}
-        </div>`
-      : `<div class="empty"><div class="ico">👕</div><h3>No winners yet for Week ${weekNumber(state.weekKey)}</h3><p>Winners appear once NBMs are logged for this week.</p></div>`;
+    const reviewCard = `
+      <div class="card">
+        <div class="section-head" style="padding:14px 16px 0;margin:0">
+          <div><h2 style="font-size:15px">Recently auto-tracked</h2>
+          <p style="margin:2px 0 0">Counted automatically — no approval needed</p></div>
+          ${recent.length ? `<button class="btn sm" data-tab="leaderboard">View insights</button>` : ""}
+        </div>
+        <div style="padding:6px 4px 8px">
+          ${
+            recent.length
+              ? recent.map(renderEntryRow).join("")
+              : `<div class="empty"><div class="ico">🗓️</div><p>No calendar NBMs tracked yet. Run a sync to pull them in.</p></div>`
+          }
+        </div>
+      </div>`;
 
     return `
       <div class="section-head">
-        <div><h2>Weekly Winners — Week ${weekNumber(state.weekKey)}</h2>
-        <p>Top ${WEEKLY_WINNER_COUNT} pick their World Championship jersey · country of choice + Cursor logo</p></div>
+        <div><h2>Calendar Sync</h2><p>New Business Meetings are detected automatically from Google Calendar</p></div>
       </div>
-      ${body}`;
-  }
-
-  function shirtSVG(color) {
-    return `
-      <svg viewBox="0 0 100 100" aria-hidden="true">
-        <path d="M34 10 L44 6 Q50 12 56 6 L66 10 L86 24 L76 38 L70 32 L70 92 L30 92 L30 32 L24 38 L14 24 Z"
-          fill="${color}" stroke="rgba(0,0,0,0.25)" stroke-width="1.5"/>
-        <path d="M44 6 Q50 16 56 6 L52 16 Q50 18 48 16 Z" fill="rgba(255,255,255,0.85)"/>
-      </svg>`;
+      ${statusCard}
+      <div class="two-col" style="margin-top:16px">
+        ${coverageCard}
+        <div class="card card-pad">
+          <h2 style="font-size:16px;margin-top:0">🔎 How detection works</h2>
+          <ul class="info-list">
+            <li><span class="dot">▸</span><span>Scans each AE's calendar for meetings with <b>external attendees</b> (outside your company domain).</span></li>
+            <li><span class="dot">▸</span><span>Infers the <b>NBM level</b> (VP/CTO, Director, Engineer) from the attendee's job title in the directory.</span></li>
+            <li><span class="dot">▸</span><span>Marks a meeting <b>Held</b> when it's in the past and was accepted; detects a booked <b>next step</b> from follow-up events.</span></li>
+            <li><span class="dot">▸</span><span>Each meeting maps to <b>one NBM</b> (deduped by event id) and is <b>counted automatically</b> — no approval, no scoring.</span></li>
+            <li><span class="dot">▸</span><span>Optionally <b>auto-detects the roster</b> from a shared Google Sheet (one tab per team) or the Directory, adding AEs and whole teams as people start.</span></li>
+          </ul>
+          <p class="meta" style="margin:10px 0 0">Full setup — Google service account, domain-wide delegation, roster discovery and scheduling — is in <code>docs/calendar-sync.md</code>.</p>
+        </div>
+      </div>
+      <div style="margin-top:16px">${reviewCard}</div>`;
   }
 
   /* ---------- Program / Playbook ---------- */
   function renderProgram() {
-    const rubricRows = Object.keys(LEVELS)
-      .map((l) => {
-        const lv = LEVELS[l];
-        return `<tr><td>${lv.short}</td><td>${lv.base}</td><td>2</td><td>2</td><td>1</td><td class="max">${lv.max}</td></tr>`;
-      })
-      .join("");
     return `
-      <div class="section-head"><div><h2>Playbook</h2><p>Everything from the PG Spotlight brief, in one place</p></div></div>
+      <div class="section-head"><div><h2>Playbook</h2><p>How the EMEA PG dashboard works, in one place</p></div></div>
       <div class="two-col">
         <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">Operational cadence</h2>
+          <h2 style="font-size:16px;margin-top:0">How it runs</h2>
           <div class="cadence-grid">
-            <div class="cad"><div class="day">Monday</div><div class="time">09:00</div><div class="desc">Kick-off call — EMEA wide</div></div>
-            <div class="cad"><div class="day">Monday</div><div class="time">17:00</div><div class="desc">Wrap-up call — local</div></div>
-            <div class="cad"><div class="day">Friday</div><div class="time">16:00</div><div class="desc">EMEA wrap-up — 2 AEs present success stories</div></div>
+            <div class="cad"><div class="day">Daily</div><div class="time">auto</div><div class="desc">Calendar sync detects new NBMs</div></div>
+            <div class="cad"><div class="day">Anytime</div><div class="time">live</div><div class="desc">Insights update as meetings land</div></div>
+            <div class="cad"><div class="day">Weekly</div><div class="time">Mon</div><div class="desc">Review progress with the team</div></div>
           </div>
           <ul class="info-list" style="margin-top:16px">
-            <li><span class="dot">▸</span><span><b>Kick-off:</b> 15 June 2026 — Sabiha opens with value stories.</span></li>
-            <li><span class="dot">▸</span><span><b>RVP submission:</b> Fridays before 12:00 via the shared sheet to present at 16:00.</span></li>
+            <li><span class="dot">▸</span><span><b>Fully automatic:</b> NBMs are detected from the team's Google Calendars — see the <button class="btn sm ghost" data-tab="calendar">Calendar Sync</button> tab. No manual logging, no approvals.</span></li>
+            <li><span class="dot">▸</span><span><b>An insight, not a contest:</b> the dashboard shows NBM progress so the team can spot momentum and where to help.</span></li>
             <li><span class="dot">▸</span><span><b>Focus:</b> Cost / business case, anchored on the Gartner report.</span></li>
-            <li><span class="dot">▸</span><span><b>Format:</b> Panini-card participants · tournament-style points · multiplier in the finals.</span></li>
+            <li><span class="dot">▸</span><span><b>Views:</b> slice progress by week, month, quarter or all-time, and by region and seniority.</span></li>
           </ul>
         </div>
         <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">Scoring rubric — NBM</h2>
-          <table class="rubric">
-            <thead><tr><th>Level of NBM</th><th>Level pts</th><th>Value Pyramid / POV</th><th>Held / Done</th><th>Calendarised step</th><th>Max</th></tr></thead>
-            <tbody>${rubricRows}</tbody>
-          </table>
-          <p style="color:var(--muted);font-size:12.5px;margin-top:12px">
-            Each NBM scores its level points plus any components achieved. A held VP/CTO meeting with a value
-            story and a booked next step is the maximum 8 points.
-          </p>
+          <h2 style="font-size:16px;margin-top:0">What counts as an NBM</h2>
+          <ul class="info-list">
+            <li><span class="dot">▸</span><span><b>An NBM is an NBM.</b> There's no scoring or weighting — every qualifying meeting counts as one.</span></li>
+            <li><span class="dot">▸</span><span><b>Qualifies when</b> the meeting has an external prospect on the invite (outside your company domain).</span></li>
+            <li><span class="dot">▸</span><span><b>Held</b> is tracked when the meeting took place, and <b>next step</b> when a follow-up is booked — shown as context, not points.</span></li>
+            <li><span class="dot">▸</span><span><b>Seniority</b> (VP/CTO · Director · Engineer) is inferred from the prospect, purely to break down where pipeline is coming from.</span></li>
+          </ul>
           <div class="btn-row" style="margin-top:8px">
             <a class="btn sm" href="${CHEATSHEET_URL}" target="_blank" rel="noopener">Cheatsheet stories ↗</a>
           </div>
@@ -998,10 +1031,11 @@
       </div>
 
       <div class="card card-pad" style="margin-top:20px">
-        <div class="section-head" style="margin:0 0 8px"><div><h2 style="font-size:16px">Prize & data</h2></div></div>
+        <div class="section-head" style="margin:0 0 8px"><div><h2 style="font-size:16px">Team & data</h2></div></div>
         <ul class="info-list">
-          <li><span class="dot">🏅</span><span><b>Weekly prize:</b> the ${WEEKLY_WINNER_COUNT} weekly winners each pick their World Championship jersey — the country of their choice, with the Cursor logo.</span></li>
-          <li><span class="dot">🗓</span><span><b>Roster start dates:</b> AEs become available from their start date. Future joiners are shown on the Squad wall but excluded from that week's logging and leaderboard until they join.</span></li>
+          <li><span class="dot">🔄</span><span><b>Auto-tracking:</b> map each AE's calendar email in the <button class="btn sm ghost" data-tab="roster">Team</button> tab so the sync knows which calendar to read.</span></li>
+          <li><span class="dot">🗓</span><span><b>Start dates:</b> AEs become active from their start date; future joiners appear on the Team page but their NBMs only count once they've started.</span></li>
+          <li><span class="dot">📈</span><span><b>Insights:</b> the numbers are meant to support coaching and momentum — not to rank people against each other.</span></li>
         </ul>
         <div class="btn-row" style="margin-top:8px">
           <button class="btn sm" data-action="import-roster">Import roster CSV</button>
@@ -1044,9 +1078,15 @@
               <label>RVP</label>
               <input type="text" data-field="rvp" value="${esc(ae.rvp)}" placeholder="Reporting RVP" />
             </div>
-            <div class="field" style="margin-top:12px">
-              <label>Start date</label>
-              <input type="date" data-field="startDate" value="${esc(ae.startDate || PROGRAM_START)}" />
+            <div class="form-grid" style="margin-top:12px">
+              <div class="field">
+                <label>Start date</label>
+                <input type="date" data-field="startDate" value="${esc(ae.startDate || PROGRAM_START)}" />
+              </div>
+              <div class="field">
+                <label>Calendar email <span class="meta">(for auto-tracking)</span></label>
+                <input type="email" data-field="calendarEmail" value="${esc(ae.calendarEmail || "")}" placeholder="ae@company.com" />
+              </div>
             </div>
             <div class="btn-row" style="margin-top:18px;justify-content:space-between">
               <div>${m.mode === "edit" ? `<button type="button" class="btn danger" data-action="delete-ae" data-id="${m.ae.id}">Delete</button>` : ""}</div>
@@ -1061,14 +1101,14 @@
     const form = $("#ae-form");
     form.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      const get = (f) => $(`[data-field="${f}"]`, form).value.trim();
-      const data = { name: get("name"), country: get("country"), region: get("region"), rvp: get("rvp"), startDate: get("startDate") || PROGRAM_START };
+      const get = (f) => { const el = $(`[data-field="${f}"]`, form); return el ? el.value.trim() : ""; };
+      const data = { name: get("name"), country: get("country"), region: get("region"), rvp: get("rvp"), startDate: get("startDate") || PROGRAM_START, calendarEmail: get("calendarEmail") };
       if (!data.name) return;
       if (m.mode === "edit") {
         Object.assign(m.ae, data);
         toast("AE updated");
       } else {
-        db.aes.push({ id: uid(), ...data });
+        db.aes.push({ id: uid(), active: true, ...data });
         toast("AE added to the squad");
       }
       save();
@@ -1080,45 +1120,8 @@
   /* ============================================================
    * Event handling
    * ========================================================== */
-  function setEntryStatus(id, status) {
-    const e = db.entries.find((x) => x.id === id);
-    if (!e) return;
-    e.status = status;
-    // Held (+2) is auto-tied to "done"; confirming or reverting clears it.
-    e.held = status === "done";
-    if (status === "booked") {
-      e.verifiedBy = "";
-      e.verifiedAt = "";
-    } else {
-      e.verifiedBy = (db.settings && db.settings.managerName) || "Manager";
-      e.verifiedAt = new Date().toISOString();
-    }
-    save();
-    render();
-    const msg = {
-      booked: "Moved back to booked",
-      confirmed: "Booking confirmed · base points now counting",
-      done: "Marked done · Held +2 added",
-      rejected: "NBM rejected",
-    }[status] || "Updated";
-    toast(msg);
-  }
-  // Leader toggles a post-meeting bonus (Value Pyramid / Next step). Only
-  // meaningful once the booking is confirmed, when points are live.
-  function toggleEntryComponent(id, comp) {
-    if (comp !== "valuePyramid" && comp !== "calendarised") return;
-    const e = db.entries.find((x) => x.id === id);
-    if (!e) return;
-    if (e.status !== "confirmed" && e.status !== "done") return;
-    e[comp] = !e[comp];
-    if (!e.verifiedBy) e.verifiedBy = (db.settings && db.settings.managerName) || "Manager";
-    save();
-    render();
-  }
-
   function bindGlobal() {
     $("#root").addEventListener("click", onClick);
-    $("#root").addEventListener("change", onChange);
   }
 
   function onClick(ev) {
@@ -1126,6 +1129,8 @@
     if (tabBtn) {
       state.tab = tabBtn.getAttribute("data-tab");
       render();
+      // Refresh the calendar sync status from the backend when opening the tab.
+      if (state.tab === "calendar") fetchCalendarSyncState().then(() => { if (state.tab === "calendar") render(); });
       return;
     }
     const scopeBtn = ev.target.closest("[data-scope]");
@@ -1139,13 +1144,6 @@
     const action = actEl.getAttribute("data-action");
     const id = actEl.getAttribute("data-id");
 
-    if (action === "copy-mgr-link") {
-      const url = location.origin + location.pathname + "#verify=" + encodeURIComponent(state.verifyMgr || "");
-      copyToClipboard(url);
-      toast("Manager link copied");
-      return;
-    }
-
     switch (action) {
       case "week-prev":
         state.weekKey = toISO(addDays(parseDate(state.weekKey), -7));
@@ -1158,6 +1156,17 @@
       case "week-today":
         state.weekKey = currentProgramWeekKey();
         render();
+        break;
+      case "period-prev":
+        state.weekKey = shiftPeriod(state.lbScope, state.weekKey, -1);
+        render();
+        break;
+      case "period-next":
+        state.weekKey = shiftPeriod(state.lbScope, state.weekKey, 1);
+        render();
+        break;
+      case "run-calendar-sync":
+        runCalendarSync();
         break;
       case "add-ae":
         state.modal = { mode: "add", ae: null };
@@ -1178,60 +1187,6 @@
         state.modal = null;
         render();
         toast("AE removed");
-        break;
-      case "log-for":
-        state.draft = blankDraft();
-        state.draft.aeId = id;
-        state.tab = "log";
-        render();
-        break;
-      case "reset-draft":
-        state.draft = blankDraft();
-        render();
-        break;
-      case "del-entry":
-        db.entries = db.entries.filter((e) => e.id !== id);
-        save();
-        render();
-        toast("Entry deleted");
-        break;
-      case "confirm-entry":
-        setEntryStatus(id, "confirmed");
-        break;
-      case "mark-done":
-        setEntryStatus(id, "done");
-        break;
-      case "revert-confirmed":
-        setEntryStatus(id, "confirmed");
-        break;
-      case "revert-booked":
-        setEntryStatus(id, "booked");
-        break;
-      case "reject-entry":
-        setEntryStatus(id, "rejected");
-        break;
-      case "toggle-comp":
-        toggleEntryComponent(id, actEl.getAttribute("data-comp"));
-        break;
-      case "confirm-all": {
-        const mgr = (db.settings && db.settings.managerName) || "Manager";
-        let n = 0;
-        db.entries.forEach((e) => {
-          if (e.weekKey === state.weekKey && e.status === "booked") {
-            e.status = "confirmed";
-            e.held = false;
-            e.verifiedBy = mgr;
-            e.verifiedAt = new Date().toISOString();
-            n++;
-          }
-        });
-        save();
-        render();
-        toast(`Confirmed ${n} booking${n === 1 ? "" : "s"}`);
-        break;
-      }
-      case "export-week":
-        exportCSV();
         break;
       case "export-all":
         exportJSON();
@@ -1258,92 +1213,6 @@
       default:
         break;
     }
-  }
-
-  function onChange(ev) {
-    const jersey = ev.target.closest("[data-action='pick-jersey']");
-    if (jersey) {
-      const aeId = jersey.getAttribute("data-id");
-      if (!db.jerseys[state.weekKey]) db.jerseys[state.weekKey] = {};
-      db.jerseys[state.weekKey][aeId] = jersey.value;
-      save();
-      render();
-      toast("Jersey selected");
-      return;
-    }
-    const mgrFilter = ev.target.closest("[data-field='verifyMgr']");
-    if (mgrFilter) {
-      state.verifyMgr = mgrFilter.value;
-      render();
-      return;
-    }
-    const mgrInput = ev.target.closest("[data-field='managerName']");
-    if (mgrInput) {
-      if (!db.settings) db.settings = { managerName: "" };
-      db.settings.managerName = mgrInput.value;
-      save();
-    }
-  }
-
-  // Log form: live preview without re-rendering (preserves input focus).
-  function bindLogForm() {
-    const form = $("#nbm-form");
-    if (!form) return;
-    form.addEventListener("input", syncDraft);
-    form.addEventListener("change", syncDraft);
-    form.addEventListener("submit", (ev) => {
-      ev.preventDefault();
-      syncDraft();
-      const d = state.draft;
-      if (!d.aeId) {
-        toast("Pick an AE first");
-        return;
-      }
-      const selectedAE = db.aes.find((ae) => ae.id === d.aeId);
-      if (selectedAE && !isActiveInWeek(selectedAE, state.weekKey)) {
-        toast("This AE has not joined by the selected week");
-        return;
-      }
-      db.entries.push({
-        id: uid(),
-        aeId: d.aeId,
-        weekKey: state.weekKey,
-        level: d.level,
-        account: d.account,
-        // Outcome bonuses start empty — the leader fills these in after the meeting.
-        valuePyramid: false,
-        held: false,
-        calendarised: false,
-        date: d.date || toISO(parseDate(state.weekKey)),
-        note: d.note,
-        status: "booked",
-        verifiedBy: "",
-        verifiedAt: "",
-        createdAt: new Date().toISOString(),
-      });
-      const base = draftPoints(d);
-      save();
-      const keepAe = d.aeId;
-      state.draft = blankDraft();
-      state.draft.aeId = keepAe;
-      render();
-      toast(`NBM booked · +${base} base pts once your RVP confirms`);
-    });
-  }
-
-  function syncDraft() {
-    const form = $("#nbm-form");
-    if (!form) return;
-    const d = state.draft;
-    form.querySelectorAll("[data-field]").forEach((el) => {
-      const f = el.getAttribute("data-field");
-      d[f] = el.type === "checkbox" ? el.checked : el.value;
-    });
-    // patch base-points preview + the confirmer hint without a full re-render
-    const prev = $("#preview-pts");
-    if (prev) prev.textContent = draftPoints(d);
-    const hint = $("#ae-manager-hint");
-    if (hint) hint.textContent = d.aeId && managerOf(d.aeId) ? "Confirmed by: " + managerOf(d.aeId) : "";
   }
 
   /* ============================================================
@@ -1379,22 +1248,6 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-  function exportCSV() {
-    const rows = entriesForWeek(state.weekKey);
-    const head = ["AE", "Region", "RVP", "Account", "Level", "Value Pyramid/POV", "Held", "Calendarised", "Points", "Date", "Notes"];
-    const lines = [head.join(",")];
-    rows.forEach((e) => {
-      const ae = db.aes.find((a) => a.id === e.aeId) || {};
-      const cell = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-      lines.push(
-        [ae.name, ae.region, ae.rvp, e.account, LEVELS[e.level].short, e.valuePyramid ? "Y" : "N",
-          e.held ? "Y" : "N", e.calendarised ? "Y" : "N", entryPoints(e), e.date, e.note]
-          .map(cell).join(",")
-      );
-    });
-    download(`pg-spotlight-week-${weekNumber(state.weekKey)}.csv`, lines.join("\n"), "text/csv");
-    toast("CSV exported");
   }
   function exportJSON() {
     download("pg-spotlight-data.json", JSON.stringify(db, null, 2), "application/json");
@@ -1544,11 +1397,8 @@
    * ========================================================== */
   function applyDeepLink() {
     try {
-      const m = (location.hash || "").match(/verify=([^&]+)/);
-      if (m) {
-        state.tab = "verify";
-        state.verifyMgr = decodeURIComponent(m[1].replace(/\+/g, " "));
-      }
+      const tab = (location.hash || "").replace(/^#/, "");
+      if (tab && TABS.some((t) => t.id === tab)) state.tab = tab;
     } catch (e) {
       /* ignore */
     }

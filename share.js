@@ -105,10 +105,18 @@
 
   /* ---------- row <-> object conversions ---------- */
   function aeToRow(a) {
-    return { id: a.id, name: a.name, country: a.country || "", region: a.region || "", rvp: a.rvp || "", start_date: a.startDate || "", photo_url: a.photoUrl || "" };
+    return {
+      id: a.id, name: a.name, country: a.country || "", region: a.region || "", rvp: a.rvp || "",
+      start_date: a.startDate || "", photo_url: a.photoUrl || "",
+      calendar_email: a.calendarEmail || "", active: a.active !== false,
+    };
   }
   function rowToAE(r) {
-    return { id: r.id, name: r.name, country: r.country || "", region: r.region || "", rvp: r.rvp || "", startDate: r.start_date || "", photoUrl: r.photo_url || "" };
+    return {
+      id: r.id, name: r.name, country: r.country || "", region: r.region || "", rvp: r.rvp || "",
+      startDate: r.start_date || "", photoUrl: r.photo_url || "",
+      calendarEmail: r.calendar_email || "", active: r.active !== false,
+    };
   }
   function entryToRow(e) {
     return {
@@ -116,6 +124,9 @@
       value_pyramid: !!e.valuePyramid, held: !!e.held, calendarised: !!e.calendarised,
       date: e.date || "", note: e.note || "", status: e.status || "pending",
       verified_by: e.verifiedBy || "", verified_at: e.verifiedAt || "", created_at: e.createdAt || new Date().toISOString(),
+      source: e.source || "manual", calendar_event_id: e.calendarEventId || null,
+      attendee_email: e.attendeeEmail || "", attendee_name: e.attendeeName || "", attendee_title: e.attendeeTitle || "",
+      auto_level: e.autoLevel || "",
     };
   }
   function rowToEntry(r) {
@@ -124,6 +135,9 @@
       valuePyramid: !!r.value_pyramid, held: !!r.held, calendarised: !!r.calendarised,
       date: r.date || "", note: r.note || "", status: r.status || "pending",
       verifiedBy: r.verified_by || "", verifiedAt: r.verified_at || "", createdAt: r.created_at || "",
+      source: r.source || "manual", calendarEventId: r.calendar_event_id || "",
+      attendeeEmail: r.attendee_email || "", attendeeName: r.attendee_name || "", attendeeTitle: r.attendee_title || "",
+      autoLevel: r.auto_level || "",
     };
   }
 

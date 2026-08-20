@@ -1,48 +1,63 @@
-# PG Spotlight — World Championship PG 2026
+# PG Dashboard — EMEA Pipeline Generation
 
-A dependency-free web app for running the PG Spotlight weekly sales championship across EMEA:
-program intro & rules, a Panini-style AE squad, NBM logging with the official scoring rubric, a
-manager verification workflow, tournament-style leaderboards, weekly winners with jersey picks, and
-the operational playbook.
+An always-on, dependency-free web dashboard for tracking New Business Meetings (NBMs)
+across the EMEA team. It grew out of the "PG Spotlight" championship and keeps the
+Panini-style squad and value-led scoring, but runs continuously with rolling
+week / month / quarter / all-time views — and can track NBMs **automatically from
+the team's Google Calendars**.
 
-By default the app works locally in each browser. For shared AE submissions and manager verification
-across the team, configure Supabase in `config.js`.
+## Highlights
+
+- **Automatic NBM tracking** — a scheduled Supabase Edge Function reads the team's
+  calendars, detects external meetings, infers seniority level, and files them as
+  NBMs (no manual logging needed). See [`docs/calendar-sync.md`](docs/calendar-sync.md).
+- **Panini squad cards** — every AE has a player card with an OVR that grows with
+  verified points.
+- **Value-led scoring** — seniority base points + outcome bonuses (held, Value
+  Pyramid / POV, booked next step); max 8 per NBM.
+- **Manager verification** — RVPs confirm and score outcomes; standings only reflect
+  verified progress.
+- **Rolling leaderboards** — week, month, quarter or all-time, plus Weekly MVPs.
+- **Shared team data** — everything syncs live through Supabase.
 
 ## Run locally
 
-Just open `index.html` in a browser, or serve the folder:
+Open `index.html` in a browser, or serve the folder:
 
 ```bash
 python3 -m http.server 5173
 # then open http://127.0.0.1:5173
 ```
 
-## Publish (pick one)
-
-**Netlify Drop (no account/CLI needed):** go to https://app.netlify.com/drop and drag this folder
-(or `pg-spotlight.zip`) onto the page. You get a public URL instantly.
-
-**GitHub Pages:** push this folder to a GitHub repo and configure Pages to serve
-from `main` / `/ (root)`.
-
-```bash
-git push -u origin main
-```
-
-## Enable Shared Team Data
+## Enable shared team data
 
 1. Create a Supabase project.
-2. Open the Supabase SQL editor and run `supabase-schema.sql`.
-3. Go to Supabase Project Settings → API.
-4. Copy the Project URL and public anon key into `config.js`.
-5. Redeploy the site.
+2. Run [`supabase-schema.sql`](supabase-schema.sql) in the SQL editor (idempotent —
+   safe to run on an existing PG Spotlight database to upgrade it).
+3. Copy the Project URL and publishable/anon key into `config.js`.
+4. Redeploy the site.
 
-Once configured, AE submissions appear in the shared manager **Verify** tab and verified NBMs power
-the shared leaderboard.
+## Enable automatic calendar tracking
+
+Follow [`docs/calendar-sync.md`](docs/calendar-sync.md): create a Google service
+account with domain-wide delegation, deploy the `calendar-sync` edge function, map
+each AE's calendar email in **Squad → Edit**, then schedule it with
+[`supabase/schedule-calendar-sync.sql`](supabase/schedule-calendar-sync.sql).
+
+## Publish
+
+**GitHub Pages:** push and enable Pages (root). **Netlify Drop:** drag the folder
+onto <https://app.netlify.com/drop>.
 
 ## Files
 
 - `index.html` — app shell
-- `styles.css` — championship theme
-- `app.js` — all application logic (state, scoring, views)
+- `styles.css` — theme
+- `app.js` — application logic (state, scoring, views, calendar-sync UI)
+- `share.js` — Supabase sync layer
+- `config.js` — Supabase connection
+- `supabase-schema.sql` — database schema (tables, RLS)
+- `supabase/functions/calendar-sync/` — Google Calendar → NBM edge function
+- `supabase/schedule-calendar-sync.sql` — pg_cron schedule for the sync
+- `docs/calendar-sync.md` — automatic tracking setup guide
 - `trophy.svg` — favicon

@@ -395,6 +395,20 @@ a { color: var(--blue); }
 }
 .bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), #e0ad28); }
 
+/* ---------- Insight breakdown bars ---------- */
+.ins-bar {
+  display: grid;
+  grid-template-columns: 140px 1fr 40px;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+.ins-bar-label { font-size: 13px; font-weight: 600; }
+.ins-bar-label .rg { color: var(--muted); font-weight: 400; font-size: 12px; }
+.ins-bar .bar { margin-top: 0; min-width: 0; }
+.ins-bar-val { text-align: right; font-weight: 800; font-size: 14px; }
+.meta { color: var(--muted); font-size: 12.5px; }
+
 /* ---------- Panini cards ---------- */
 .grid-cards {
   display: grid;
@@ -561,6 +575,7 @@ textarea { resize: vertical; min-height: 64px; }
 .badge.pending { color: var(--gold); border-color: rgba(245,197,66,0.45); background: rgba(245,197,66,0.12); }
 .badge.verified { color: var(--green); border-color: rgba(46,204,113,0.45); background: rgba(46,204,113,0.12); }
 .badge.rejected { color: var(--muted); border-color: var(--border); background: var(--surface-2); }
+.badge.auto { color: #4f7cff; border-color: rgba(79,124,255,0.42); background: rgba(79,124,255,0.12); }
 
 /* tab pending count */
 .tab .count {
@@ -585,6 +600,7 @@ textarea { resize: vertical; min-height: 64px; }
   padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--muted);
 }
 .chip b { color: var(--text); }
+.chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ---------- Recent entries list ---------- */
 .entry {
