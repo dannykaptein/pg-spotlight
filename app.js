@@ -425,26 +425,6 @@
       (a, b) => b.nbms - a.nbms || b.held - a.held || a.ae.name.localeCompare(b.ae.name)
     );
   }
-  function aeSeasonStats(aeId) {
-    let nbms = 0, held = 0;
-    db.entries.forEach((e) => {
-      if (e.aeId !== aeId) return;
-      if (!countsTowardStandings(e)) return;
-      nbms += 1;
-      if (e.held) held += 1;
-    });
-    return { nbms, held };
-  }
-  // Colour band for a Team card — based on NBM activity, not a score.
-  function cardBand(stats) {
-    const n = stats.nbms;
-    if (n >= 12) return "lvl-legend";
-    if (n >= 8) return "lvl-elite";
-    if (n >= 5) return "lvl-gold";
-    if (n >= 2) return "lvl-mid";
-    return "lvl-low";
-  }
-
   /* ============================================================
    * App state
    * ========================================================== */
@@ -620,79 +600,6 @@
           <li><span class="dot">▸</span><span><b>Spot where deals are advancing or stalling</b> — where next steps are being booked and where they aren't.</span></li>
           <li><span class="dot">▸</span><span><b>Ground the discussion in real activity</b> rather than self-reported numbers, because everything is drawn from calendars.</span></li>
         </ul>
-      </div>`;
-  }
-
-  /* ---------- Overview / Home ---------- */
-  function renderHome() {
-    const sync = db.calendarSync || {};
-    const lastSync = sync.lastRunAt
-      ? new Date(sync.lastRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-      : "not yet run";
-    const autoCount = db.entries.filter((e) => e.source === "calendar" && withinReporting(e)).length;
-    const features = [
-      ["🗓️", "Auto-tracked from calendars", "New Business Meetings are detected automatically from the team's Google Calendars — nothing to log by hand."],
-      ["📈", "Progress, not a contest", "See how pipeline generation is trending across EMEA — volumes, seniority mix and held rates, not a race for prizes."],
-      ["⚡", "Zero admin", "No logging, no approvals, no scoring. Meetings flow in from calendars and update the dashboard on their own."],
-      ["🎯", "Every NBM counts equally", "An NBM is an NBM — the dashboard counts meetings and how many were held, without points or weighting."],
-      ["🌍", "Whole-team view", "Break progress down by region, team and seniority, over week, month, quarter or all-time."],
-      ["👥", "Per-AE profiles", "Each AE has a profile showing their NBM activity and held rate at a glance."],
-    ];
-
-    return `
-      <div class="hero">
-        <div class="ball">📊</div>
-        <div class="eyebrow">EMEA Pipeline Generation</div>
-        <h1>EMEA AE Activity Tracker</h1>
-        <p class="lead">
-          An always-on view of New Business Meeting progress across EMEA. Meetings are tracked
-          automatically from the team's calendars and rolled up into clear insights — by region,
-          team and seniority, over week, month, quarter or all-time.
-        </p>
-        <div class="facts">
-          <span class="chip">🌍 <b>${db.aes.filter((a) => a.active !== false).length}</b> AEs on the board</span>
-          <span class="chip">🗓️ <b>${autoCount}</b> NBMs tracked</span>
-          <span class="chip">🔄 Last sync <b>${lastSync}</b></span>
-          <span class="chip">⚡ <b>0</b> manual steps</span>
-        </div>
-        <div class="cta btn-row">
-          <button class="btn primary" data-tab="leaderboard">View insights</button>
-          <button class="btn" data-tab="roster">Team</button>
-          <button class="btn ghost" data-tab="calendar">Calendar sync</button>
-        </div>
-      </div>
-
-      <div class="section-head"><div><h2>How it works</h2><p>A fully automatic insight into NBM progress</p></div></div>
-      <div class="rules-grid">
-        ${features.map((r) => `<div class="rule"><div class="ic">${r[0]}</div><b>${r[1]}</b><p>${esc(r[2])}</p></div>`).join("")}
-      </div>
-
-      <div class="two-col">
-        <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">🗓️ How meetings are tracked</h2>
-          <div class="step-list">
-            <div class="step-row"><span class="n">1</span><div><b>Calendars are scanned</b><p>A scheduled job reads each AE's Google Calendar and finds external New Business Meetings.</p></div></div>
-            <div class="step-row"><span class="n">2</span><div><b>NBMs are captured</b><p>Seniority is inferred from the attendee, and held / next-step outcomes are detected automatically.</p></div></div>
-            <div class="step-row"><span class="n">3</span><div><b>Insights update</b><p>Every meeting flows straight into the dashboard — no logging and no approvals.</p></div></div>
-          </div>
-        </div>
-        <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">📈 What you can see</h2>
-          <div class="step-list">
-            <div class="step-row"><span class="n">1</span><div><b>Team momentum</b><p>NBM volume and held rate by week, month, quarter or all-time across the whole region.</p></div></div>
-            <div class="step-row"><span class="n">2</span><div><b>Seniority & region mix</b><p>Where the pipeline is coming from — VP/CTO vs Director vs Engineer, and which regions are active.</p></div></div>
-            <div class="step-row"><span class="n">3</span><div><b>Per-AE progress</b><p>Each AE's activity and held rate, to spot who needs support — not to crown a winner.</p></div></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card card-pad" style="margin-top:20px">
-        <h2 style="font-size:16px;margin-top:0">📋 What counts as an NBM</h2>
-        <p style="color:var(--muted);font-size:13.5px;margin:0 0 6px">
-          An NBM is an NBM — there's no scoring. A meeting counts when it has an external prospect on the
-          invite; we also track whether it was <b>held</b> and whether a <b>next step</b> was booked. Details are in the
-          <button class="btn sm ghost" data-tab="program">Playbook</button>.
-        </p>
       </div>`;
   }
 
@@ -994,65 +901,6 @@
       </div>`;
   }
 
-  /* ---------- Team ---------- */
-  function renderRoster() {
-    if (!db.aes.length) {
-      return `
-        <div class="section-head"><div><h2>Team</h2><p>Account Executives on the board</p></div>
-          <button class="btn primary" data-action="add-ae">+ Add AE</button></div>
-        <div class="empty"><div class="ico">👥</div><h3>No AEs yet</h3><p>Add the team so their calendar NBMs can be tracked.</p></div>`;
-    }
-    // Per-AE NBM count for the current calendar month (a recent-momentum signal).
-    const monthKey = toISO(mondayOf(new Date()));
-    const { start, end } = periodRange("month", monthKey);
-    const monthCount = (aeId) =>
-      db.entries.filter((e) => e.aeId === aeId && countsTowardStandings(e) && entryInRange(e, start, end)).length;
-
-    const sorted = [...db.aes].sort((a, b) => {
-      const activeA = a.active !== false, activeB = b.active !== false;
-      if (activeA !== activeB) return activeA ? -1 : 1;
-      return aeSeasonStats(b.id).nbms - aeSeasonStats(a.id).nbms;
-    });
-    const cards = sorted
-      .map((ae, idx) => {
-        const s = aeSeasonStats(ae.id);
-        const c = countryByCode(ae.country);
-        const active = ae.active !== false;
-        const initials = ae.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-        const heldRate = s.nbms ? Math.round((s.held / s.nbms) * 100) : 0;
-        return `
-          <div class="panini ${cardBand(s)}">
-            <div class="panini-inner">
-              <div class="top-row">
-                <div class="ovr">${s.nbms}<small>NBMs</small></div>
-                <div class="flag">${c.flag}</div>
-              </div>
-              <div class="avatar"><span class="initials">${esc(initials)}</span></div>
-              <div class="card-tier">${ae.rvp ? esc(ae.rvp) : "—"}</div>
-              <div class="pname">${esc(ae.name)}</div>
-              <div class="prole">${esc(ae.region)} · ${esc(c.name)}</div>
-              <div class="joinline ${active ? "active" : "future"}">${active ? "Active" : "Joins"} · ${formatStartDate(ae.startDate)}${ae.calendarEmail ? "" : " · no calendar"}</div>
-              <div class="pstats">
-                <div class="pstat"><b>${monthCount(ae.id)}</b><span>This month</span></div>
-                <div class="pstat"><b>${s.held}</b><span>Held</span></div>
-                <div class="pstat"><b>${heldRate}%</b><span>Held rate</span></div>
-              </div>
-              <div class="card-actions">
-                <button data-action="edit-ae" data-id="${ae.id}">Edit</button>
-              </div>
-            </div>
-          </div>`;
-      })
-      .join("");
-    const missing = db.aes.filter((a) => a.active !== false && !a.calendarEmail).length;
-    return `
-      <div class="section-head">
-        <div><h2>Team</h2><p>${db.aes.length} Account Executives · NBM activity from calendar tracking${missing ? ` · <span style="color:var(--muted)">${missing} missing a calendar</span>` : ""}</p></div>
-        <button class="btn primary" data-action="add-ae">+ Add AE</button>
-      </div>
-      <div class="grid-cards">${cards}</div>`;
-  }
-
   function statusBadge(e) {
     const map = {
       booked: ["pending", "⏳ Booked"],
@@ -1246,55 +1094,6 @@
         </div>
       </div>
       <div style="margin-top:16px">${reviewCard}</div>`;
-  }
-
-  /* ---------- Program / Playbook ---------- */
-  function renderProgram() {
-    return `
-      <div class="section-head"><div><h2>Playbook</h2><p>How the EMEA AE Activity Tracker works, in one place</p></div></div>
-      <div class="two-col">
-        <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">How it runs</h2>
-          <div class="cadence-grid">
-            <div class="cad"><div class="day">Daily</div><div class="time">auto</div><div class="desc">Calendar sync detects new NBMs</div></div>
-            <div class="cad"><div class="day">Anytime</div><div class="time">live</div><div class="desc">Insights update as meetings land</div></div>
-            <div class="cad"><div class="day">Weekly</div><div class="time">Mon</div><div class="desc">Review progress with the team</div></div>
-          </div>
-          <ul class="info-list" style="margin-top:16px">
-            <li><span class="dot">▸</span><span><b>Fully automatic:</b> NBMs are detected from the team's Google Calendars — see the <button class="btn sm ghost" data-tab="calendar">Calendar Sync</button> tab. No manual logging, no approvals.</span></li>
-            <li><span class="dot">▸</span><span><b>An insight, not a contest:</b> the dashboard shows NBM progress so the team can spot momentum and where to help.</span></li>
-            <li><span class="dot">▸</span><span><b>Focus:</b> Cost / business case, anchored on the Gartner report.</span></li>
-            <li><span class="dot">▸</span><span><b>Views:</b> slice progress by week, month, quarter or all-time, and by region and seniority.</span></li>
-          </ul>
-        </div>
-        <div class="card card-pad">
-          <h2 style="font-size:16px;margin-top:0">What counts as an NBM</h2>
-          <ul class="info-list">
-            <li><span class="dot">▸</span><span><b>An NBM is an NBM.</b> There's no scoring or weighting — every qualifying meeting counts as one.</span></li>
-            <li><span class="dot">▸</span><span><b>Qualifies when</b> the meeting has an external prospect on the invite (outside your company domain).</span></li>
-            <li><span class="dot">▸</span><span><b>Held</b> is tracked when the meeting took place, and <b>next step</b> when a follow-up is booked — shown as context, not points.</span></li>
-            <li><span class="dot">▸</span><span><b>Seniority</b> (VP/CTO · Director · Engineer) is inferred from the prospect, purely to break down where pipeline is coming from.</span></li>
-          </ul>
-          <div class="btn-row" style="margin-top:8px">
-            <a class="btn sm" href="${CHEATSHEET_URL}" target="_blank" rel="noopener">Cheatsheet stories ↗</a>
-          </div>
-        </div>
-      </div>
-
-      <div class="card card-pad" style="margin-top:20px">
-        <div class="section-head" style="margin:0 0 8px"><div><h2 style="font-size:16px">Team & data</h2></div></div>
-        <ul class="info-list">
-          <li><span class="dot">🔄</span><span><b>Auto-tracking:</b> map each AE's calendar email in the <button class="btn sm ghost" data-tab="roster">Team</button> tab so the sync knows which calendar to read.</span></li>
-          <li><span class="dot">🗓</span><span><b>Start dates:</b> AEs become active from their start date; future joiners appear on the Team page but their NBMs only count once they've started.</span></li>
-          <li><span class="dot">📈</span><span><b>Insights:</b> the numbers are meant to support coaching and momentum — not to rank people against each other.</span></li>
-        </ul>
-        <div class="btn-row" style="margin-top:8px">
-          <button class="btn sm" data-action="import-roster">Import roster CSV</button>
-          <button class="btn sm" data-action="export-all">Export all data (JSON)</button>
-          <button class="btn sm" data-action="import-data">Import data</button>
-          <button class="btn sm danger" data-action="reset-data">Reset to sample</button>
-        </div>
-      </div>`;
   }
 
   /* ---------- Modal (add/edit AE) ---------- */
