@@ -98,6 +98,21 @@ function inferLevel(text: string): string {
   return DEFAULT_LEVEL;
 }
 
+/* ── Meeting-type inference ────────────────────────────────────────────────
+ * Every auto-tracked meeting defaults to "NBM". If the event title/description
+ * clearly names a later-stage meeting, tag it accordingly. Order matters: the
+ * more specific Go/No-Go variants are checked before the generic ones. */
+const MEETING_TYPE_KEYWORDS: [RegExp, string][] = [
+  [/\b(eb)\b.*(go\s*[/-]?\s*no\s*[-]?\s*go)|\b(eb)\s+(go|no.?go)\b/i, "EB Go/No-Go"],
+  [/\bchampion\b.*(go\s*[/-]?\s*no\s*[-]?\s*go)|\bchampion\s+(go|no.?go)\b/i, "Champion Go/No-Go"],
+  [/\bgo\s*[/-]?\s*no\s*[-]?\s*go\b/i, "Champion Go/No-Go"],
+  [/\b(vo\s+progression|value\s+opportunity|vo)\b/i, "VO Progression"],
+];
+function inferMeetingType(text: string): string {
+  for (const [re, type] of MEETING_TYPE_KEYWORDS) if (re.test(text)) return type;
+  return "NBM";
+}
+
 function isInternal(email: string): boolean {
   const domain = (email.split("@")[1] || "").toLowerCase();
   return COMPANY_DOMAINS.some((d) => domain === d || domain.endsWith("." + d));
@@ -528,7 +543,7 @@ type NBMRow = {
   value_pyramid: boolean; held: boolean; calendarised: boolean; date: string; note: string;
   status: string; verified_by: string; verified_at: string; created_at: string;
   source: string; calendar_event_id: string; attendee_email: string; attendee_name: string;
-  attendee_title: string; auto_level: string;
+  attendee_title: string; auto_level: string; meeting_type: string;
 };
 
 async function run() {
@@ -554,7 +569,7 @@ async function run() {
 
   // Existing calendar NBMs so we don't clobber manager edits: we only insert new
   // ones and refresh detection fields, never override status once a human touched it.
-  const existRes = await sb("nbm_entries?source=eq.calendar&select=id,calendar_event_id,status,verified_by,verified_at");
+  const existRes = await sb("nbm_entries?source=eq.calendar&select=id,calendar_event_id,status,verified_by,verified_at,meeting_type");
   const existing = new Map<string, any>();
   (await existRes.json()).forEach((r: any) => existing.set(r.calendar_event_id, r));
 
@@ -614,6 +629,9 @@ async function run() {
       // If a leader has manually overridden the status, respect that.
       const humanTouched = prior && prior.verified_by && !/auto/i.test(prior.verified_by);
       const status = humanTouched ? prior.status : (held ? "done" : "confirmed");
+      // Meeting type is inferred once at creation (default NBM); on re-sync we
+      // keep whatever's already there so inline edits in the dashboard survive.
+      const mtType = prior?.meeting_type || inferMeetingType(`${ev.summary || ""} ${ev.description || ""}`);
 
       const row: NBMRow = {
         id: prior?.id || `cal-${eventId}`,
@@ -636,6 +654,7 @@ async function run() {
         attendee_name: primary.displayName || "",
         attendee_title: "",
         auto_level: level,
+        meeting_type: mtType,
       };
       toUpsert.push(row);
       if (prior) updated++; else created++;

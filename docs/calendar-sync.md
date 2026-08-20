@@ -37,6 +37,11 @@ For each kept meeting it derives:
 - **Account** from the external attendee's email domain.
 - **Held** — true when the meeting is in the past and was accepted.
 - **Next step** — true when a later external meeting exists with the same company.
+- **Meeting type** — a tag describing the meeting's stage. Every entry defaults to
+  `NBM`; the sync will instead pick `VO Progression`, `Champion Go/No-Go` or
+  `EB Go/No-Go` when those are clearly named in the event title/description. Anyone
+  can change the type inline on an entry row in the dashboard, and a manually set
+  type is preserved on the next sync.
 
 Each meeting maps to exactly one NBM, deduplicated by the Google event id, so the
 job is safe to run as often as you like.
@@ -202,7 +207,7 @@ The Sheet source takes precedence when both are configured.
 
 - The function only requests **read-only** calendar and directory access, and only
   stores the fields the dashboard needs (meeting title, date, external attendee,
-  inferred seniority; for roster: name, email, team, region, start date).
+  inferred seniority, meeting type; for roster: name, email, team, region, start date).
 - Auto-tracked NBMs are counted automatically — there is no approval step. Re-running
   refreshes untouched detections and adds new meetings without duplicating them.
 - Prefer per-user OAuth over a service account? Each AE would connect their own

@@ -704,6 +704,16 @@
         ${regionRows.map(([r, n]) => barRow(esc(r), n, regionMax)).join("") || "<p class='meta'>No data.</p>"}
       </div>`;
 
+    // Breakdown by meeting type.
+    const typeKeys = Object.keys(MEETING_TYPES);
+    const byType = typeKeys.map((k) => ({ k, n: pool.filter((e) => meetingType(e) === k).length }));
+    const typeMax = Math.max(1, ...byType.map((x) => x.n));
+    const typeCard = `
+      <div class="card card-pad">
+        <h2 style="font-size:16px;margin-top:0">By meeting type</h2>
+        ${byType.map((x) => barRow(esc(MEETING_TYPES[x.k].short), x.n, typeMax)).join("") || "<p class='meta'>No data.</p>"}
+      </div>`;
+
     // Per-AE progress (ordered by activity — a progress view, not a contest).
     const rows = leaderboard(scope, state.weekKey).filter((r) => r.nbms > 0)
       .sort((a, b) => b.nbms - a.nbms || b.held - a.held || a.ae.name.localeCompare(b.ae.name));
@@ -745,6 +755,7 @@
         ${levelCard}
         ${regionCard}
       </div>
+      <div style="margin-top:16px">${typeCard}</div>
       <div class="section-head" style="margin-top:20px"><div><h2 style="font-size:16px">Per-AE progress</h2><p>Ordered by activity — to see momentum and who may need support</p></div></div>
       <div class="card">
         <table class="lb">
@@ -837,6 +848,21 @@
     return "";
   }
 
+  // Visible meeting-type pill.
+  function meetingTypeBadge(e) {
+    const mt = meetingType(e);
+    const t = MEETING_TYPES[mt];
+    return `<span class="badge mt ${t.cls}">${esc(t.short)}</span>`;
+  }
+  // Inline, editable meeting-type control (persists + syncs on change).
+  function meetingTypeControl(e) {
+    const cur = meetingType(e);
+    const opts = Object.keys(MEETING_TYPES)
+      .map((k) => `<option value="${esc(k)}" ${k === cur ? "selected" : ""}>${esc(MEETING_TYPES[k].short)}</option>`)
+      .join("");
+    return `<select class="mt-select ${MEETING_TYPES[cur].cls}" data-action="set-meeting-type" data-id="${esc(e.id)}" title="Meeting type">${opts}</select>`;
+  }
+
   function renderEntryRow(e) {
     const ae = db.aes.find((a) => a.id === e.aeId);
     const c = countryByCode(ae ? ae.country : "");
@@ -849,9 +875,10 @@
       <div class="entry">
         <span class="flag">${c.flag}</span>
         <div class="main">
-          <b>${esc(ae ? ae.name : "Unknown")}</b> <span class="badge ${lvl.cls}">${lvl.short}</span> ${statusBadge(e)} ${sourceBadge(e)}
+          <b>${esc(ae ? ae.name : "Unknown")}</b> <span class="badge ${lvl.cls}">${lvl.short}</span> ${meetingTypeBadge(e)} ${statusBadge(e)} ${sourceBadge(e)}
           <div class="meta">${esc(e.account || "—")}${tags ? " · " + tags : ""}</div>
         </div>
+        <div class="acts">${meetingTypeControl(e)}</div>
       </div>`;
   }
 
@@ -1122,6 +1149,25 @@
    * ========================================================== */
   function bindGlobal() {
     $("#root").addEventListener("click", onClick);
+    $("#root").addEventListener("change", onChange);
+  }
+
+  // Inline <select> edits (e.g. the meeting-type tag) persist + trigger sync.
+  function onChange(ev) {
+    const el = ev.target.closest("[data-action]");
+    if (!el) return;
+    const action = el.getAttribute("data-action");
+    const id = el.getAttribute("data-id");
+    if (action === "set-meeting-type") {
+      const entry = db.entries.find((e) => e.id === id);
+      if (!entry) return;
+      const val = MEETING_TYPES[el.value] ? el.value : DEFAULT_MEETING_TYPE;
+      if (entry.meetingType === val) return;
+      entry.meetingType = val;
+      save();
+      render();
+      toast(`Meeting type set to ${MEETING_TYPES[val].short}`);
+    }
   }
 
   function onClick(ev) {

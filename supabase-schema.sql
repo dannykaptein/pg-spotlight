@@ -62,6 +62,8 @@ alter table public.nbm_entries add column if not exists attendee_name  text;
 alter table public.nbm_entries add column if not exists attendee_title text;
 -- Auto-detected seniority level before any manager override (VP/CTO, etc.).
 alter table public.nbm_entries add column if not exists auto_level text;
+-- Meeting type tag: NBM (default), VO Progression, Champion Go/No-Go, EB Go/No-Go.
+alter table public.nbm_entries add column if not exists meeting_type text default 'NBM';
 
 -- One NBM per calendar event: makes the edge function's upsert idempotent.
 create unique index if not exists nbm_entries_calendar_event_ux
