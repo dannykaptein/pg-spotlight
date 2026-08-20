@@ -168,6 +168,31 @@
         return true;
       });
   }
+  /* ---------- schema tolerance ---------- */
+  // The live DB may be on an older schema (e.g. missing calendar_email or
+  // meeting_type). Detect the real columns once and only write those, so upserts
+  // never 400 on unknown columns. Any new columns start syncing automatically
+  // once the database is migrated — no client change needed.
+  var AES_COLS = null, ENTRY_COLS = null;
+  var AES_BASE = ["id", "name", "country", "region", "rvp", "start_date", "photo_url", "created_at"];
+  var ENTRY_BASE = ["id", "ae_id", "week_key", "level", "account", "value_pyramid", "held", "calendarised", "date", "note", "status", "verified_by", "verified_at", "created_at"];
+  function detectSchema() {
+    return Promise.all([
+      sbGet("aes?select=*&limit=1").then(function (r) { return r[0] ? Object.keys(r[0]) : null; }).catch(function () { return null; }),
+      sbGet("nbm_entries?select=*&limit=1").then(function (r) { return r[0] ? Object.keys(r[0]) : null; }).catch(function () { return null; }),
+    ]).then(function (res) {
+      AES_COLS = res[0] || AES_BASE;
+      ENTRY_COLS = res[1] || ENTRY_BASE;
+    }).catch(function () { AES_COLS = AES_BASE; ENTRY_COLS = ENTRY_BASE; });
+  }
+  function prune(row, cols) {
+    if (!cols) return row;
+    var out = {};
+    Object.keys(row).forEach(function (k) { if (cols.indexOf(k) !== -1) out[k] = row[k]; });
+    return out;
+  }
+  function aeRow(a) { return prune(aeToRow(a), AES_COLS); }
+  function entryRow(e) { return prune(entryToRow(e), ENTRY_COLS); }
   function pullRemote() {
     return Promise.all([sbGet("aes?select=*"), sbGet("nbm_entries?select=*"), sbGet("jerseys?select=*")]).then(function (res) {
       var jerseys = {};
@@ -237,8 +262,8 @@
     remote = normalize(remote); merged = normalize(merged);
     var tA = indexById(remote.aes), tE = indexById(remote.entries);
     var mA = indexById(merged.aes), mE = indexById(merged.entries);
-    var upAes = merged.aes.filter(function (a) { return !eq(a, tA[a.id]); }).map(aeToRow);
-    var upEntries = merged.entries.filter(function (e) { return !eq(e, tE[e.id]); }).map(entryToRow);
+    var upAes = merged.aes.filter(function (a) { return !eq(a, tA[a.id]); }).map(aeRow);
+    var upEntries = merged.entries.filter(function (e) { return !eq(e, tE[e.id]); }).map(entryRow);
     var delAes = remote.aes.filter(function (a) { return !has(mA, a.id); }).map(function (a) { return a.id; });
     var delEntries = remote.entries.filter(function (e) { return !has(mE, e.id); }).map(function (e) { return e.id; });
 
@@ -455,7 +480,7 @@
   function forceReplaceRemote() {
     var local = readLocal();
     var ops = [];
-    if (local.aes.length) ops.push(sbUpsert("aes", local.aes.map(aeToRow)));
+    if (local.aes.length) ops.push(sbUpsert("aes", local.aes.map(aeRow)));
     return Promise.all(ops).then(function () {
       // Snapshot the roster-only local state. Because this snapshot has no
       // entries/jerseys, the very next mergeDB() treats the server's rows as
@@ -486,16 +511,18 @@
     ensureBar();
     restoreTab();
     cleanupStaleKeys();
-    var didReset = resetRealRosterOnce();
     var stamped = backfillLocalManagers();
-    if (didReset) {
-      forceReplaceRemote()
-        .then(function () { setOk(); pendingReload = true; tryReload(); })
-        .catch(function (err) { setErr(String((err && err.message) || err)); pendingReload = true; tryReload(); });
-    } else {
+    // Learn the live schema before any write so upserts only send existing columns.
+    detectSchema().then(function () {
+      var didReset = resetRealRosterOnce();
+      if (didReset) {
+        return forceReplaceRemote()
+          .then(function () { setOk(); pendingReload = true; tryReload(); })
+          .catch(function (err) { setErr(String((err && err.message) || err)); pendingReload = true; tryReload(); });
+      }
       if (stamped) { pendingReload = true; tryReload(); }
-      syncOnce();
-    }
+      return syncOnce();
+    });
     setInterval(syncOnce, POLL_MS);
     document.addEventListener("visibilitychange", tryReload);
     window.addEventListener("focus", tryReload);
